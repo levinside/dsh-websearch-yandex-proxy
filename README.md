@@ -91,6 +91,60 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
   -d '{"messages":[{"role":"user","content":[{"type":"text","text":"Perform a web search for the query: deepseek harness"}]}],"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":5}]}'
 ```
 
+## Вариант B — нативный плагин-провайдер (без локального HTTP-прыжка)
+
+Вместо отдельного процесса прокси можно поставить **Cordis-плагин** (`plugin/`),
+который регистрирует свой `WebSearchProvider` в шов `ctx.web`: запросы `web_search`
+ходят из процесса харнеса напрямую в Yandex Cloud Search API. Клиентский тул
+`web_search` не меняется; отдельный сервер и порт 8787 больше не нужны.
+
+Файлы плагина:
+
+| Файл | Что делает |
+|---|---|
+| `plugin/package.json` | npm-пакет `dsh-web-search-yandex` (+ `dsh.bundle.patch`) |
+| `plugin/provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` via `lib/yandex-api.mjs` |
+| `plugin/index.mjs` | Cordis-запись: `name`/`inject`/`apply`, резолв опций из конфига + env |
+| `plugin/cordis.patch.yml` | bundle-патч, объявляющий строку плагина |
+
+### Установка в профиль
+
+1. Поставить пакет в профиль (пример для профиля `web`):
+
+   ```bash
+   cd ~/.dsh/profiles/web && pnpm add file:/путь/к/yandex-search-proxy/plugin
+   ```
+
+2. В `cordis.patch.yml` профиля выбрать его как поисковый провайдер и отключить
+   DeepSeek (патч заменяет конфиг строки целиком, поэтому `fetchProvider` сохраняем):
+
+   ```yaml
+   - id: web
+     name: "@deepseek-ai/dsh-web"
+     config:
+       searchProvider: yandex
+       fetchProvider: http
+   - id: web-search-deepseek
+     disabled: true
+   - id: web-search-yandex
+     name: dsh-web-search-yandex
+     config:
+       apiKey: AQVN...
+       folderId: b1g...
+   ```
+
+   Ключи берутся из конфига строки (`apiKey`/`folderId`/`baseURL`/`searchType`/`l10n`/`maxResults`),
+   при отсутствии — из env (`YANDEX_API_KEY`, `YANDEX_FOLDER_ID` и т.д.).
+
+3. Перезапустить харнес (появление нового модуля в `node_modules` профиля требует
+   перезагрузки, в отличие от правок значений). После этого `web_search` идёт
+   напрямую в Яндекс; процесс прокси можно остановить.
+
+Плагин самодостаточен: у него нет зависимостей от `@deepseek-ai/*`, поэтому он
+резолвится из своего собственного дерева модулей в профиле (как уже установленные
+там `dshmarket`/`dsh-sound-cue`). По той же причине он не зависит от Cordis-типов
+и Schemastery — конфиг читается как обычный объект строки патча.
+
 ## Бэкенды
 
 | `YANDEX_BACKEND` | Что делает | Когда использовать |
