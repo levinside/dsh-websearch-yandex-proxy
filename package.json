@@ -1,0 +1,18 @@
+{
+  "name": "dsh-websearch-yandex-proxy",
+  "version": "0.1.0",
+  "description": "Local Anthropic Messages API proxy exposing the web_search_20250305 tool, backed by Yandex search (official Yandex Cloud Search API or best-effort HTML scrape). Drop-in endpoint for DeepSeek Harness web-search-deepseek.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "bin": {
+    "dsh-websearch-yandex-proxy": "./server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs"
+  }
+}

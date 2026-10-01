@@ -1,0 +1,9 @@
+# dependencies / build
+node_modules/
+
+# secrets — никогда не коммитить ключи
+.env
+
+# logs & OS noise
+*.log
+.DS_Store
