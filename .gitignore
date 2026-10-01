@@ -7,3 +7,6 @@ node_modules/
 # logs & OS noise
 *.log
 .DS_Store
+
+# local agent tooling
+.opencode/
