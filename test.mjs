@@ -149,6 +149,16 @@ test('parseSerpItem skips internal Yandex links', () => {
   assert.equal(parsed, undefined)
 })
 
+test('parseSerpItem decodes title entities in a single pass (&amp;lt; stays &lt;)', () => {
+  const parsed = parseSerpItem('<h2><a href="https://ex.com/p">Escaped &amp;lt;tag&amp;gt; &amp;#60; x</a></h2>')
+  assert.equal(parsed.title, 'Escaped &lt;tag&gt; &#60; x')
+})
+
+test('parseSerpItem decodes href entities in a single pass (&amp;lt; stays &lt;)', () => {
+  const parsed = parseSerpItem('<h2><a href="https://ex.com/?q=&amp;lt;">T</a></h2>')
+  assert.equal(parsed.url, 'https://ex.com/?q=&lt;')
+})
+
 test('resolveYandexUrl decodes the url= wrapper and passes plain hrefs through', () => {
   assert.equal(resolveYandexUrl('https://yandex.com/search/?url=https%3A%2F%2Ftarget.example%2Fx'), 'https://target.example/x')
   assert.equal(resolveYandexUrl('https://plain.example/path'), 'https://plain.example/path')
