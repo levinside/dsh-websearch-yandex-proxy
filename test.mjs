@@ -5,11 +5,12 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 
-import { loadConfig } from './lib/config.mjs'
+import { loadConfig, effectiveBackend } from './lib/config.mjs'
 import { extractQuery, buildResponse, MessagesRequestError } from './lib/messages.mjs'
-import { parsePayload, parseDocsXml } from './lib/yandex-api.mjs'
-import { parseSerp, parseSerpItem, resolveYandexUrl } from './lib/yandex-scrape.mjs'
+import { parsePayload, parseDocsXml, YandexApiError } from './lib/yandex-api.mjs'
+import { parseSerp, parseSerpItem, resolveYandexUrl, isCaptcha } from './lib/yandex-scrape.mjs'
 import { createProxyServer } from './server.mjs'
 
 function baseConfig(overrides = {}) {
@@ -114,6 +115,12 @@ test('parsePayload surfaces Yandex error envelopes', () => {
   assert.throws(() => parsePayload({ message: 'boom' }, 10), /boom/)
 })
 
+test('parsePayload rejects rawData that is not valid base64', () => {
+  const isBase64Error = (error) => error instanceof YandexApiError && /not valid base64/.test(error.message)
+  assert.throws(() => parsePayload({ rawData: 'definitely not base64!!' }, 10), isBase64Error)
+  assert.throws(() => parsePayload({ rawData: '' }, 10), isBase64Error)
+})
+
 // ── Yandex SERP scraping parsing ─────────────────────────────────────────────
 
 const SERP_HTML = `<html><body>
@@ -147,10 +154,42 @@ test('resolveYandexUrl decodes the url= wrapper and passes plain hrefs through',
   assert.equal(resolveYandexUrl('https://plain.example/path'), 'https://plain.example/path')
 })
 
+// ── captcha detection ────────────────────────────────────────────────────────
+
+test('isCaptcha ignores the bare word "captcha" in ordinary organic results', () => {
+  const html = `<html><body><ul class="serp-list"><li class="serp-item">
+    <h2><a href="https://howto.example/captcha-guide">How to solve a captcha</a></h2>
+    <span class="OrganicTextContentSpan">Captcha problems? Here is every captcha type explained.</span>
+  </li></ul></body></html>`
+  assert.equal(isCaptcha(html), false)
+})
+
+test('isCaptcha flags real Yandex interstitial pages', () => {
+  assert.equal(isCaptcha('<html><body><div class="SmartCaptcha-widget"></div></body></html>'), true)
+  assert.equal(isCaptcha('<html><body><form action="https://captcha.yandex.ru/check"></form></body></html>'), true)
+  assert.equal(isCaptcha('<html><body>Подтвердите, что запросы отправляли вы</body></html>'), true)
+  assert.equal(isCaptcha('<div class="CheckboxCaptcha"></div>'), true)
+})
+
+// ── config resolution ────────────────────────────────────────────────────────
+
+test('effectiveBackend resolves auto to api with credentials and scrape without', () => {
+  assert.equal(effectiveBackend(loadConfig({ YANDEX_BACKEND: 'auto' })), 'scrape')
+  assert.equal(effectiveBackend(loadConfig({
+    YANDEX_BACKEND: 'auto',
+    YANDEX_API_KEY: 'k',
+    YANDEX_FOLDER_ID: 'f',
+  })), 'api')
+})
+
+test('loadConfig rejects an unknown YANDEX_BACKEND', () => {
+  assert.throws(() => loadConfig({ YANDEX_BACKEND: 'bogus' }), /invalid YANDEX_BACKEND/)
+})
+
 // ── E2E over HTTP with the mock backend ──────────────────────────────────────
 
-async function withServer(fn) {
-  const config = baseConfig()
+async function withServer(fn, overrides = {}) {
+  const config = baseConfig(overrides)
   const server = createProxyServer(config)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = server.address().port
@@ -223,4 +262,43 @@ test('E2E: malformed JSON body maps to 400 with an Anthropic-style error', async
     const payload = await response.json()
     assert.ok(payload.error.message.includes('valid JSON'))
   })
+})
+
+test('E2E: backend timeout maps to 504, not 502', async () => {
+  const hanging = createServer(() => { /* never respond: hold the request open past the proxy timeout */ })
+  await new Promise((resolve) => hanging.listen(0, '127.0.0.1', resolve))
+  try {
+    await withServer(async (base) => {
+      const response = await fetch(`${base}/anthropic/v1/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ content: 'timeout probe query' }] }),
+      })
+      assert.equal(response.status, 504)
+      const payload = await response.json()
+      assert.ok(payload.error.message.includes('timed out'))
+    }, {
+      YANDEX_BACKEND: 'api',
+      YANDEX_API_KEY: 'test-key',
+      YANDEX_FOLDER_ID: 'test-folder',
+      YANDEX_SEARCH_API_URL: `http://127.0.0.1:${hanging.address().port}/search`,
+      YANDEX_REQUEST_TIMEOUT_MS: '100',
+    })
+  } finally {
+    await new Promise((resolve) => hanging.close(resolve))
+  }
+})
+
+test('E2E: oversized request body maps to a 400 JSON error, not a connection reset', async () => {
+  await withServer(async (base) => {
+    const body = JSON.stringify({ messages: [{ content: 'x'.repeat(4_096) }] })
+    const response = await fetch(`${base}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    })
+    assert.equal(response.status, 400)
+    const payload = await response.json()
+    assert.ok(payload.error.message.includes('too large'))
+  }, { YANDEX_MAX_REQUEST_BYTES: '1024' })
 })

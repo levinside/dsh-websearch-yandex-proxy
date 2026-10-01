@@ -58,17 +58,26 @@ function readBody(request, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
+    let tooLarge = false
     request.on('data', (chunk) => {
       size += chunk.length
       if (size > maxBytes) {
-        reject(new MessagesRequestError('request body too large'))
-        request.destroy()
+        // Reject once, then keep draining so the client can finish sending
+        // and receive the 400 response instead of a connection reset.
+        if (!tooLarge) {
+          tooLarge = true
+          reject(new MessagesRequestError('request body too large'))
+        }
         return
       }
       chunks.push(chunk)
     })
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-    request.on('error', reject)
+    request.on('end', () => {
+      if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8'))
+    })
+    request.on('error', (error) => {
+      if (!tooLarge) reject(error)
+    })
   })
 }
 
@@ -149,10 +158,13 @@ export function createProxyServer(config) {
     } catch (error) {
       if (error instanceof MessagesRequestError) {
         adapterError(response, 400, error.message)
+      } else if (controller.signal.aborted) {
+        // Checked before the backend error types: an abort is wrapped by the
+        // backends into their own error classes, and a timeout must surface
+        // as 504 rather than their default 502.
+        adapterError(response, 504, `search aborted or timed out: ${String(controller.signal.reason ?? '')}`)
       } else if (error instanceof yandexApi.YandexApiError || error instanceof yandexScrape.YandexScrapeError) {
         adapterError(response, error.status ?? 502, `${error.message}`)
-      } else if (controller.signal.aborted) {
-        adapterError(response, 504, `search aborted or timed out: ${String(controller.signal.reason ?? '')}`)
       } else {
         adapterError(response, 502, `search backend failed: ${String(error)}`)
       }
