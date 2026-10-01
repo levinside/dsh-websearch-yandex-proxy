@@ -77,9 +77,9 @@ const YANDEX_XML = `<?xml version="1.0" encoding="UTF-8"?>
       <group>
         <doc>
           <url>https://example.com/a?x=1&amp;y=2</url>
-          <title>Title &lt;A&gt;</title>
+          <title><hlword>Title</hlword> &lt;A&gt;</title>
           <passages>
-            <passage>First passage text.</passage>
+            <passage>First <hlword>passage</hlword> text.</passage>
             <passage>Second passage.</passage>
           </passages>
         </doc>
@@ -93,7 +93,7 @@ const YANDEX_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </response>
 </yandexsearch>`
 
-test('parseDocsXml extracts url/title/passages with entity decoding', () => {
+test('parseDocsXml extracts url/title/passages, decodes entities and strips hlword tags', () => {
   const sources = parseDocsXml(YANDEX_XML, 10)
   assert.equal(sources.length, 2)
   assert.equal(sources[0].url, 'https://example.com/a?x=1&y=2')
