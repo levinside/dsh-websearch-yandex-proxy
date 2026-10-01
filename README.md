@@ -106,7 +106,7 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
 | `plugin/provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` via вендоренного клиента |
 | `plugin/index.mjs` | Cordis-запись: `name`/`inject`/`apply`, резолв опций из конфига + env |
 | `plugin/lib/` | Вендоренная копия клиента Yandex (`yandex-api.mjs` + `xml.mjs`) — пакет самодостаточен при установке |
-| `plugin/cordis.patch.yml` | bundle-патч, объявляющий строку плагина |
+| `plugin/cordis.patch.yml` | bundle-патч, который **вставляет** строку плагина через `- insert:` (новые плагины обязаны вставляться, а не объявляться top-level-строкой — иначе «entry not found») |
 
 ### Установка в профиль
 
@@ -114,6 +114,14 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
 
    ```bash
    cd ~/.dsh/profiles/web && pnpm add file:/путь/к/yandex-search-proxy/plugin
+   ```
+
+1b. Добавить пакет в список бандлов профиля (`package.json` → `dsh.profile.bundles`),
+   иначе загрузчик не узнает модуль как entry (ровно так устроены `dshmarket`
+   и `dsh-sound-cue`):
+
+   ```json
+   "dsh": { "profile": { "bundles": [ "@deepseek-ai/dsh-base", "…", "dsh-web-search-yandex" ] } }
    ```
 
 2. В `cordis.patch.yml` профиля выбрать его как поисковый провайдер и отключить
