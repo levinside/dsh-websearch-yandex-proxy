@@ -2,10 +2,11 @@
  * A native `WebSearchProvider` for the DeepSeek Harness `ctx.web` seam, backed
  * by the official Yandex Cloud Search API.
  *
- * This is variant B (no HTTP loop): the harness process calls Yandex directly
- * through lib/yandex-api.mjs and returns normalized `WebSearchSource[]` — the
- * same shape the model-facing `web_search` tool already renders, so the client
- * part stays byte-identical.
+ * This is Variant B (no HTTP loop): the harness process calls Yandex directly
+ * through the vendored `./lib/yandex-api.mjs` (a byte-identical copy of the
+ * standalone `lib/`, kept in sync by a test guard) and returns normalized
+ * `WebSearchSource[]` — the same shape the model-facing `web_search` tool
+ * already renders, so the client part stays byte-identical.
  *
  * The provider is deliberately dependency-free (no `@deepseek-ai/*` imports):
  * profile-installed plugins in this setup resolve only their own module tree,
@@ -83,15 +84,19 @@ export class YandexSearchProvider {
       })
       return { sources, truncated: false }
     } catch (error) {
-      if (error instanceof YandexApiError) {
-        const wrapped = new Error(`Yandex web search failed: ${error.message}`)
-        wrapped.code = WEB_PROVIDER_ERROR
-        throw wrapped
-      }
+      // Abort must win over backend error wrapping: `yandex-api` folds an
+      // AbortError from fetch into a YandexApiError (with the original as
+      // `cause`), so this check comes BEFORE the backend-error branch — the
+      // same ordering the standalone server applies (504 vs provider 502).
       if (signal?.aborted === true) {
         const aborted = new Error('Yandex web search aborted')
         aborted.code = 'WEB_ABORTED'
         throw aborted
+      }
+      if (error instanceof YandexApiError) {
+        const wrapped = new Error(`Yandex web search failed: ${error.message}`)
+        wrapped.code = WEB_PROVIDER_ERROR
+        throw wrapped
       }
       throw error
     }

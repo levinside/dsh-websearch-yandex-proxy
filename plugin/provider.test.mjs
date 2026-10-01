@@ -168,6 +168,25 @@ test('search() surfaces aborted signals as WEB_ABORTED', async () => {
   )
 })
 
+test('search() maps WEB_ABORTED even when the abort reached us wrapped as a YandexApiError', async () => {
+  // yandex-api folds an AbortError from fetch into a YandexApiError (with the
+  // original as `cause`); the provider must still surface WEB_ABORTED, not
+  // WEB_PROVIDER_ERROR, so the abort check precedes the backend-error branch.
+  const controller = new AbortController()
+  const backend = fakeBackend(() => {
+    controller.abort()
+    throw new YandexApiError('Yandex Search API request failed: The operation was aborted', {
+      cause: Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+    })
+  })
+  const provider = new YandexSearchProvider(providerOptions(providerConfig()), backend.runSearch)
+
+  await assert.rejects(
+    provider.search({ query: 'q' }, controller.signal),
+    (error) => error.code === 'WEB_ABORTED',
+  )
+})
+
 // ── registration contract ────────────────────────────────────────────────────
 
 test('apply() registers the provider into a ctx.web-shaped service', () => {

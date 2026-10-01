@@ -22,12 +22,12 @@ export { YANDEX_PROVIDER_ID } from './provider.mjs'
 
 /**
  * Config keys (read from the plugin row's `config`, no schema required):
- *   apiKey / apiKeyEnv    — literal key or env var name (default YANDEX_API_KEY)
- *   folderId / folderIdEnv— literal folder id or env var (default YANDEX_FOLDER_ID)
- *   baseURL               — search API URL (default the public Yandex Cloud endpoint)
- *   searchType            — SERP segment (default SEARCH_TYPE_RU)
- *   l10n                  — localization (default LOCALIZATION_RU)
- *   maxResults            — upper bound on sources (default 10)
+ *   apiKey / apiKeyEnv      — literal key or env var name (default YANDEX_API_KEY)
+ *   folderId / folderIdEnv  — literal folder id or env var (default YANDEX_FOLDER_ID)
+ *   baseURL                 — search API URL (default the public Yandex Cloud endpoint)
+ *   searchType              — SERP segment (default SEARCH_TYPE_RU)
+ *   l10n                    — localization (default LOCALIZATION_RU)
+ *   maxResults              — upper bound on sources (default 10)
  */
 
 const DEFAULT_SEARCH_API_URL = 'https://searchapi.api.cloud.yandex.net/v2/web/search'
@@ -56,9 +56,11 @@ export function resolveOptions(config = {}) {
 }
 
 /**
- * Register the provider with `ctx.web`. A thunk snapshots options at every
- * operation, so a profile-config reload between searches picks up the new
- * endpoint/key without re-registering (no selection flicker).
+ * Register the provider with `ctx.web`. The thunk defers option resolution to
+ * each operation, so every search uses one consistent snapshot. On a
+ * profile-config reload the row is re-applied with a fresh config object and
+ * the seam auto-disposes the old provider, so new endpoint/keys take effect
+ * without manual unregistration (no duplicate-id failures).
  */
 export function apply(ctx, config = {}) {
   ctx.web.registerSearchProvider(new YandexSearchProvider(() => resolveOptions(config)))
