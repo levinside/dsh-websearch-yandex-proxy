@@ -1,0 +1,13 @@
+# Bundle patch contributed by dsh-web-search-yandex: INSERTS the provider
+# plugin row into the profile entry tree. Top-level `- id:` rows are overrides
+# of existing entries (and are skipped with "entry not found" when absent), so
+# a new plugin must use the `- insert:` form, like the base bundle and
+# dshmarket do. Profile wiring then OVERRIDES this row's config (searchProvider
+# selection + literal credentials) — see the main README, "Вариант B".
+- insert:
+    - id: web-search-yandex
+      name: dsh-web-search-yandex
+      inject: [web]
+      config:
+        apiKeyEnv: YANDEX_API_KEY
+        folderIdEnv: YANDEX_FOLDER_ID

@@ -1,10 +1,15 @@
 # dsh-websearch-yandex-proxy
 
-Локальный прокси для инструмента **`web_search`** из DeepSeek Harness, который ищет
-через **Yandex** под капотом. Клиентская часть (модельный тул `web_search`) не меняется
-ни строчкой — подменяется только endpoint, на который ходит штатный провайдер
-`web-search-deepseek`.
+Два способа дать инструменту **`web_search`** из DeepSeek Harness поиск через Yandex.
+Клиентская часть (модельный тул `web_search`) не меняется ни в одном из способов:
 
+- **Вариант A — Messages-прокси** (этот сервер, `server.mjs`): подменяется только
+  endpoint, на который ходит штатный провайдер `web-search-deepseek`.
+- **Вариант B — нативный Cordis-плагин** (`plugin/`): провайдер `yandex` живёт в
+  процессе харнеса и ходит в Yandex Cloud Search API напрямую, без HTTP-прыжка.
+  **Рекомендуется для штатного использования** (так развёрнут текущий профиль).
+
+### Вариант A — диаграмма
 ```
 DeepSeek Harness  ── web_search tool ──►  ctx.web (WebRuntime)
    └─ provider web-search-deepseek ──POST {endpoint}/messages──►
@@ -39,7 +44,11 @@ DeepSeek Harness  ── web_search tool ──►  ctx.web (WebRuntime)
 сам выполняет поиск через Yandex. Запросы любых других типов (`file_search`, обычный
 чат) сюда не предназначены — это поисковый шлюз.
 
-## Быстрый старт
+> **Вариант B этот HTTP-контракт не использует**: плагин регистрирует свой
+> `WebSearchProvider` в `ctx.web` и вызывает Yandex Cloud Search API напрямую из
+> процесса харнеса (см. раздел ниже).
+
+## Быстрый старт (Вариант A)
 
 Для запуска нужен только Node ≥ 18 (проверено на 24):
 
@@ -54,7 +63,10 @@ scrape). Проверка:
 curl -s http://127.0.0.1:8787/healthz
 ```
 
-## Подключение к DeepSeek Harness
+## Вариант A — подключение прокси к DeepSeek Harness
+
+> Не путать с Вариантом B: этот раздел настраивает *отдельный процесс* прокси
+> (см. ниже «Вариант B — нативный плагин»).
 
 1. Держите сервер запущенным (можно фоном: `nohup node server.mjs &`).
 2. В GUI харнеса: **Settings → Plugins → Plugin configuration → Web search** → в поле
@@ -66,7 +78,7 @@ curl -s http://127.0.0.1:8787/healthz
    прокси его игнорирует, но `available()` провайдера требует наличия ключа.
 4. Готово — модель вызывает всё тот же `web_search`, а поиск идёт через Yandex.
 
-### Вариант через конфиг профиля (если страница настроек недоступна)
+### Вариант A через конфиг профиля (если страница настроек недоступна)
 
 Конфиг профиля лежит в `~/.dsh/profiles/<profile>/cordis.patch.yml` (для Web GUI —
 профиль `web`). Добавьте туда строку-патч (она заменяет конфиг строки целиком,
@@ -90,6 +102,91 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
   -H 'content-type: application/json' \
   -d '{"messages":[{"role":"user","content":[{"type":"text","text":"Perform a web search for the query: deepseek harness"}]}],"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":5}]}'
 ```
+
+## Вариант B — нативный плагин-провайдер (без локального HTTP-прыжка)
+
+Вместо отдельного процесса прокси можно поставить **Cordis-плагин** (`plugin/`),
+который регистрирует свой `WebSearchProvider` в шов `ctx.web`: запросы `web_search`
+ходят из процесса харнеса напрямую в Yandex Cloud Search API. Клиентский тул
+`web_search` не меняется; отдельный сервер и порт 8787 больше не нужны.
+
+Файлы плагина:
+
+| Файл | Что делает |
+|---|---|
+| `plugin/package.json` | npm-пакет `dsh-web-search-yandex` (+ `dsh.bundle.patch`) |
+| `plugin/provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` via вендоренного клиента |
+| `plugin/index.mjs` | Cordis-запись: `name`/`inject`/`apply`, резолв опций из конфига + env |
+| `plugin/lib/` | Вендоренная копия клиента Yandex (`yandex-api.mjs` + `xml.mjs`) — пакет самодостаточен при установке |
+| `plugin/cordis.patch.yml` | bundle-патч, который **вставляет** строку плагина через `- insert:` (новые плагины обязаны вставляться, а не объявляться top-level-строкой — иначе «entry not found») |
+
+### Установка в профиль
+
+1. Поставить пакет в профиль (пример для профиля `web`):
+
+   ```bash
+   cd ~/.dsh/profiles/web && pnpm add file:/путь/к/yandex-search-proxy/plugin
+   ```
+
+   > pnpm ставит `file:`-пакет **копией** (по списку `files` в package.json), а не
+   > симлинком. Поэтому после изменения кода плагина его надо переустановить:
+   > `pnpm remove dsh-web-search-yandex && pnpm add file:…/plugin`.
+
+2. Добавить пакет в список бандлов профиля (`package.json` → `dsh.profile.bundles`),
+   иначе загрузчик не узнает модуль как entry (ровно так устроены `dshmarket`
+   и `dsh-sound-cue`):
+
+   ```json
+   "dsh": { "profile": { "bundles": [ "@deepseek-ai/dsh-base", "…", "dsh-web-search-yandex" ] } }
+   ```
+
+3. В `cordis.patch.yml` профиля выбрать его как поисковый провайдер и отключить
+   DeepSeek. Строка `web-search-yandex` здесь — **переопределение конфига** строки,
+   которую вставил bundle-патч плагина (патч заменяет конфиг целиком, поэтому
+   `fetchProvider` и имя строки сохраняем):
+
+   ```yaml
+   - id: web
+     name: "@deepseek-ai/dsh-web"
+     config:
+       searchProvider: yandex
+       fetchProvider: http
+   - id: web-search-deepseek
+     disabled: true
+   - id: web-search-yandex
+     name: dsh-web-search-yandex
+     config:
+       apiKey: AQVN...
+       folderId: b1g...
+   ```
+
+   Ключи берутся из конфига строки (`apiKey`/`folderId`/`baseURL`/`searchType`/`l10n`/`maxResults`),
+   при отсутствии — из env (`YANDEX_API_KEY`, `YANDEX_FOLDER_ID`; имена env настраиваются
+   через `apiKeyEnv`/`folderIdEnv`).
+
+4. Перезапустить харнес и проверить, что поиск идёт напрямую в Яндекс (например,
+   дёрнуть `web_search` в чате или `dsh --profile web --dump-config | grep -i yandex`
+   для проверки собранного дерева). Процесс прокси (Вариант A) можно остановить.
+
+Проверка собранного дерева без запуска приложения:
+
+```bash
+dsh --profile web --dump-config   # в дереве должны быть id: web-search-yandex и disabled: true у deepseek
+```
+
+Плагин самодостаточен: у него нет зависимостей от `@deepseek-ai/*`, поэтому он
+резолвится из своего собственного дерева модулей в профиле (как уже установленные
+там `dshmarket`/`dsh-sound-cue`). По той же причине он не зависит от Cordis-типов
+и Schemastery — конфиг читается как обычный объект строки патча. Yandex-клиент
+вендорится в `plugin/lib/`; тест-стражник следит, чтобы `plugin/lib/*` не
+расходились с `lib/*`.
+
+> **Важно про перезапуск.** Правки значений существующих строк применяются на лету
+> (`patchReload: "live"`), но **новая строка-плагин, изменение списка `bundles` и
+> переустановка пакета подхватываются только при перезапуске харнеса** (новый
+> модуль — `restart-required` по коду HMR). На время между сохранением патча и
+> рестартом `web_search` в запущенной сессии будет недоступен (конфиг уже указывает
+> на `yandex`, а провайдер ещё не зарегистрирован).
 
 ## Бэкенды
 
@@ -126,7 +223,12 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
 2. Включите сервис **Yandex Search API** в этом каталоге.
 3. Создайте **сервисный аккаунт** и выдайте ему роль **`search-api.webSearch.user`**
    на каталог.
-4. Для сервисного аккаунта создайте **API-ключ** (выдаётся строка вида `AQVN...`).
+4. Создайте ключ **в карточке сервиса Yandex Search API**: он выдаёт специальный
+   ключ с областью `yc.search-api.execute` (строка `AQVN...`), привязанный к
+   сервисному аккаунту. Обычный «API-ключ» сервисного аккаунта из раздела
+   «Сервисные аккаунты» работать может не начать: без области/роли сервис вернёт
+   `403 PermissionDenied` с перечислением каталога/облака/организации — проверьте,
+   что ключ создан в том каталоге, на который выдана роль.
 5. Запустите:
 
 ```bash
@@ -139,13 +241,18 @@ YANDEX_API_KEY=AQVN... YANDEX_FOLDER_ID=b1g... node server.mjs
 ## Тесты
 
 ```bash
-node --test test.mjs
+npm test                     # то же: node --test test.mjs plugin/provider.test.mjs
 ```
 
-Покрыто: извлечение запроса (в т.ч. префикс `Perform a web search for the query:`),
-сборка ответа (блоки `web_search_tool_result` + `text.citations`), парсинг base64-XML
-официального API, парсинг HTML-выдачи для scrape, E2E по HTTP (все три пути
-Messages, healthz, ошибки).
+Два файла:
+- `test.mjs` — Вариант A: извлечение запроса (в т.ч. префикс
+  `Perform a web search for the query:`), сборка ответа (блоки
+  `web_search_tool_result` + `text.citations`), парсинг base64-XML официального API,
+  парсинг HTML-выдачи для scrape, детект капчи, E2E по HTTP (все три пути Messages,
+  healthz, ошибки, таймаут→504, переполнение тела→400).
+- `plugin/provider.test.mjs` — Вариант B: резолв опций, `available()`, нормализация
+  результатов, применение `maxResults`, маппинг ошибок (`WEB_PROVIDER_ERROR`/`WEB_ABORTED`),
+  регистрация через `apply()` и тест-стражник синхронности `plugin/lib/*` с `lib/*`.
 
 ## Ограничения и честные оговорки
 
