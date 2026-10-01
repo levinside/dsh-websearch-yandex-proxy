@@ -13,7 +13,7 @@
  * contract (`registerSearchProvider`, `WebSearchRequest`, cancellation signal).
  */
 
-import { search as searchYandex, YandexApiError } from '../lib/yandex-api.mjs'
+import { search as searchYandex, YandexApiError } from './lib/yandex-api.mjs'
 
 /** Stable id this provider registers under (pin the `web` row's searchProvider to it). */
 export const YANDEX_PROVIDER_ID = 'yandex'

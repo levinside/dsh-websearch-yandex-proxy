@@ -12,7 +12,8 @@
   "files": [
     "index.mjs",
     "provider.mjs",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "lib/"
   ],
   "license": "MIT",
   "dsh": {

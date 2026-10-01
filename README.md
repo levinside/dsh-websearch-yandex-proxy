@@ -103,8 +103,9 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
 | Файл | Что делает |
 |---|---|
 | `plugin/package.json` | npm-пакет `dsh-web-search-yandex` (+ `dsh.bundle.patch`) |
-| `plugin/provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` via `lib/yandex-api.mjs` |
+| `plugin/provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` via вендоренного клиента |
 | `plugin/index.mjs` | Cordis-запись: `name`/`inject`/`apply`, резолв опций из конфига + env |
+| `plugin/lib/` | Вендоренная копия клиента Yandex (`yandex-api.mjs` + `xml.mjs`) — пакет самодостаточен при установке |
 | `plugin/cordis.patch.yml` | bundle-патч, объявляющий строку плагина |
 
 ### Установка в профиль
@@ -143,7 +144,15 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
 Плагин самодостаточен: у него нет зависимостей от `@deepseek-ai/*`, поэтому он
 резолвится из своего собственного дерева модулей в профиле (как уже установленные
 там `dshmarket`/`dsh-sound-cue`). По той же причине он не зависит от Cordis-типов
-и Schemastery — конфиг читается как обычный объект строки патча.
+и Schemastery — конфиг читается как обычный объект строки патча. Yandex-клиент
+вендорится в `plugin/lib/` (pnpm ставит `file:`-пакет копией, а не симлинком);
+тест-стражник следит, чтобы `plugin/lib/*` не расходились с `lib/*`.
+
+> **Важно про перезапуск.** Правки значений существующих строк применяются на лету
+> (`patchReload: "live"`), но **новая строка-плагин подхватывается только при
+> перезапуске харнеса** (новый модуль — `restart-required` по коду HMR). На время
+> между сохранением патча и рестартом `web_search` в запущенной сессии будет
+> недоступен (конфиг уже указывает на `yandex`, а провайдер ещё не зарегистрирован).
 
 ## Бэкенды
 

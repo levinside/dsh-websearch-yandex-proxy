@@ -5,10 +5,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 import { YandexSearchProvider, YANDEX_PROVIDER_ID, WEB_PROVIDER_ERROR } from './provider.mjs'
 import { resolveOptions, apply } from './index.mjs'
-import { YandexApiError } from '../lib/yandex-api.mjs'
+import { YandexApiError } from './lib/yandex-api.mjs'
 
 function providerConfig(overrides = {}) {
   return {
@@ -174,4 +177,15 @@ test('apply() registers the provider into a ctx.web-shaped service', () => {
   assert.equal(registered.length, 1)
   assert.equal(registered[0].id, YANDEX_PROVIDER_ID)
   assert.equal(registered[0].available(), true)
+})
+
+// ── vendored client sync ─────────────────────────────────────────────────────
+
+test('plugin/lib stays byte-identical to the standalone lib/', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  for (const file of ['yandex-api.mjs', 'xml.mjs']) {
+    const source = readFileSync(join(root, 'lib', file), 'utf8')
+    const vendored = readFileSync(join(root, 'plugin', 'lib', file), 'utf8')
+    assert.equal(vendored, source, `${file} must match lib/${file} — re-copy after editing the client`)
+  }
 })
