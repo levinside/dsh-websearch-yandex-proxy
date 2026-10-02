@@ -34,6 +34,23 @@ async function testCredentials() {
   return { yandexApiKey: 'test-key', yandexFolderId: 'test-folder' }
 }
 
+/** Fake ctx.web with an optional credentials seam. */
+function harnessCtx({ withSeam = true } = {}) {
+  const ctx = {
+    web: {
+      registerSearchProvider(provider) {
+        ctx.registered = (ctx.registered ?? []).concat(provider)
+      },
+    },
+  }
+  if (withSeam) {
+    ctx.get = (name) => name === 'credentials'
+      ? { resolve: async (ref) => ({ value: `seam-${ref}` }) }
+      : undefined
+  }
+  return ctx
+}
+
 function cannedSources(query) {
   return [
     { url: 'https://a.example', title: `A for ${query}`, snippet: 'snippet a' },
@@ -56,9 +73,9 @@ function fakeBackend(impl) {
 test('resolveOptions falls back to defaults with no config', () => {
   const options = resolveOptions({})
   assert.equal(options.yandexApiKey, '')
-  assert.equal(options.yandexApiKeyEnv, 'YANDEX_API_KEY')
+  assert.equal(options.yandexApiKeyRef, 'YANDEX_API_KEY')
   assert.equal(options.yandexFolderId, '')
-  assert.equal(options.yandexFolderIdEnv, 'YANDEX_FOLDER_ID')
+  assert.equal(options.yandexFolderIdRef, 'YANDEX_FOLDER_ID')
   assert.equal(options.yandexSearchApiUrl, 'https://searchapi.api.cloud.yandex.net/v2/web/searchAsync')
   assert.equal(options.yandexSearchType, 'SEARCH_TYPE_COM')
   assert.equal(options.yandexL10n, 'LOCALIZATION_COM')
@@ -66,40 +83,28 @@ test('resolveOptions falls back to defaults with no config', () => {
 })
 
 test('resolveOptions carries literals and ref names, not secret values', () => {
-  process.env.YANDEX_API_KEY = 'env-key'
-  process.env.YANDEX_FOLDER_ID = 'env-folder'
-  try {
-    const options = resolveOptions({ apiKey: 'lit-key', folderId: 'lit-folder', baseURL: 'http://x', maxResults: 3 })
-    assert.equal(options.yandexApiKey, 'lit-key')
-    assert.equal(options.yandexFolderId, 'lit-folder')
-    assert.equal(options.yandexApiKeyEnv, 'YANDEX_API_KEY')
-    assert.equal(options.yandexFolderIdEnv, 'YANDEX_FOLDER_ID')
-    assert.equal(options.yandexSearchApiUrl, 'http://x')
-    assert.equal(options.maxResults, 3)
-    // resolveOptions never consults the environment for secrets — that is
-    // resolveCredentials' job.
-    const bare = resolveOptions({})
-    assert.equal(bare.yandexApiKey, '')
-    assert.equal(bare.yandexFolderId, '')
-  } finally {
-    delete process.env.YANDEX_API_KEY
-    delete process.env.YANDEX_FOLDER_ID
-  }
+  const options = resolveOptions({
+    apiKey: 'lit-key',
+    folderId: 'lit-folder',
+    apiKeyRef: 'MY_KEY_REF',
+    folderIdRef: 'MY_FOLDER_REF',
+    baseURL: 'http://x',
+    maxResults: 3,
+  })
+  assert.equal(options.yandexApiKey, 'lit-key')
+  assert.equal(options.yandexFolderId, 'lit-folder')
+  assert.equal(options.yandexApiKeyRef, 'MY_KEY_REF')
+  assert.equal(options.yandexFolderIdRef, 'MY_FOLDER_REF')
+  assert.equal(options.yandexSearchApiUrl, 'http://x')
+  assert.equal(options.maxResults, 3)
 })
 
-test('resolveOptions reads apiKeyEnv/folderIdEnv names from the config', () => {
-  process.env.MY_YANDEX_KEY = 'k'
-  process.env.MY_YANDEX_FOLDER = 'f'
-  try {
-    const options = resolveOptions({ apiKeyEnv: 'MY_YANDEX_KEY', folderIdEnv: 'MY_YANDEX_FOLDER' })
-    assert.equal(options.yandexApiKey, '')
-    assert.equal(options.yandexApiKeyEnv, 'MY_YANDEX_KEY')
-    assert.equal(options.yandexFolderId, '')
-    assert.equal(options.yandexFolderIdEnv, 'MY_YANDEX_FOLDER')
-  } finally {
-    delete process.env.MY_YANDEX_KEY
-    delete process.env.MY_YANDEX_FOLDER
-  }
+test('resolveOptions defaults ref names when only literals are given', () => {
+  const options = resolveOptions(providerConfig({ apiKey: 'k', folderId: 'f' }))
+  assert.equal(options.yandexApiKey, 'k')
+  assert.equal(options.yandexApiKeyRef, 'YANDEX_API_KEY')
+  assert.equal(options.yandexFolderId, 'f')
+  assert.equal(options.yandexFolderIdRef, 'YANDEX_FOLDER_ID')
 })
 
 test('resolveOptions normalizes invalid maxResults to the default', () => {
@@ -110,52 +115,42 @@ test('resolveOptions normalizes invalid maxResults to the default', () => {
 
 // ── credential resolution ────────────────────────────────────────────────────
 
-test('resolveCredentials prefers literal config over the seam and env', async () => {
-  const ctx = {
-    get: (name) => name === 'credentials'
-      ? { resolve: async (ref) => ({ value: `seam-${ref}` }) }
-      : undefined,
-  }
-  const resolved = await resolveCredentials(ctx, {
-    apiKey: 'lit-key',
-    folderId: 'lit-folder',
-  })
+test('resolveCredentials prefers literal config over the seam', async () => {
+  const ctx = harnessCtx({ withSeam: true })
+  const resolved = await resolveCredentials(ctx, { apiKey: 'lit-key', folderId: 'lit-folder' })
   assert.equal(resolved.yandexApiKey, 'lit-key')
   assert.equal(resolved.yandexFolderId, 'lit-folder')
 })
 
 test('resolveCredentials uses the ctx.credentials seam when present', async () => {
-  const ctx = {
-    get: (name) => name === 'credentials'
-      ? { resolve: async (ref) => ({ value: `seam-${ref}` }) }
-      : undefined,
-  }
+  const ctx = harnessCtx({ withSeam: true })
   const resolved = await resolveCredentials(ctx, {})
   assert.equal(resolved.yandexApiKey, 'seam-YANDEX_API_KEY')
   assert.equal(resolved.yandexFolderId, 'seam-YANDEX_FOLDER_ID')
 })
 
-test('resolveCredentials falls back to the process env without the seam', async () => {
-  process.env.MY_YANDEX_KEY = 'env-key'
-  process.env.MY_YANDEX_FOLDER = 'env-folder'
-  try {
-    const resolved = await resolveCredentials({}, {
-      apiKeyEnv: 'MY_YANDEX_KEY',
-      folderIdEnv: 'MY_YANDEX_FOLDER',
-    })
-    assert.equal(resolved.yandexApiKey, 'env-key')
-    assert.equal(resolved.yandexFolderId, 'env-folder')
-  } finally {
-    delete process.env.MY_YANDEX_KEY
-    delete process.env.MY_YANDEX_FOLDER
-  }
+test('resolveCredentials resolves custom ref names through the seam', async () => {
+  const ctx = harnessCtx({ withSeam: true })
+  const resolved = await resolveCredentials(ctx, {
+    apiKeyRef: 'MY_KEY_REF',
+    folderIdRef: 'MY_FOLDER_REF',
+  })
+  assert.equal(resolved.yandexApiKey, 'seam-MY_KEY_REF')
+  assert.equal(resolved.yandexFolderId, 'seam-MY_FOLDER_REF')
 })
 
-test('resolveCredentials returns undefined when nothing resolves', async () => {
-  process.env.YANDEX_API_KEY = ''
-  const resolved = await resolveCredentials({}, {})
-  assert.equal(resolved.yandexApiKey, undefined)
-  assert.equal(resolved.yandexFolderId, undefined)
+test('resolveCredentials never consults the process environment', async () => {
+  process.env.YANDEX_API_KEY = 'env-key'
+  process.env.YANDEX_FOLDER_ID = 'env-folder'
+  try {
+    // No seam (ctx without a credentials service): nothing may resolve.
+    const resolved = await resolveCredentials({}, {})
+    assert.equal(resolved.yandexApiKey, undefined)
+    assert.equal(resolved.yandexFolderId, undefined)
+  } finally {
+    delete process.env.YANDEX_API_KEY
+    delete process.env.YANDEX_FOLDER_ID
+  }
 })
 
 // ── availability ─────────────────────────────────────────────────────────────
@@ -167,8 +162,8 @@ test('provider id is stable', () => {
 test('available() requires a parseable URL and a valid maxResults', () => {
   assert.equal(new YandexSearchProvider(providerOptions(providerConfig())).available(), true)
   assert.equal(new YandexSearchProvider(providerOptions(providerConfig({ baseURL: 'not a url' }))).available(), false)
-  // Credential visibility is decided at search time (the seam may resolve a
-  // ref even when nothing sits in the config or the environment right now).
+  // Credentials are resolved at search time through the seam; availability is
+  // about the structurally runnable parts only.
   assert.equal(new YandexSearchProvider(providerOptions(providerConfig({ apiKey: '', folderId: '' }))).available(), true)
 })
 
@@ -282,41 +277,49 @@ test('search() maps WEB_ABORTED even when the abort reached us wrapped as a Yand
 // ── registration contract ────────────────────────────────────────────────────
 
 test('apply() registers the provider into a ctx.web-shaped service', () => {
-  const registered = []
-  const ctx = { web: { registerSearchProvider: (provider) => { registered.push(provider) } } }
+  const ctx = harnessCtx()
   apply(ctx, providerConfig())
-  assert.equal(registered.length, 1)
-  assert.equal(registered[0].id, YANDEX_PROVIDER_ID)
-  assert.equal(registered[0].available(), true)
+  assert.equal(ctx.registered.length, 1)
+  assert.equal(ctx.registered[0].id, YANDEX_PROVIDER_ID)
+  assert.equal(ctx.registered[0].available(), true)
 })
 
-test('apply() stays silent when credentials are visible (literal or env)', () => {
+test('apply() stays silent when the harness has a credentials seam', () => {
   const messages = []
   const originalWarn = console.warn
   console.warn = (message) => { messages.push(message) }
   try {
-    const registered = []
-    const ctx = { web: { registerSearchProvider: (provider) => { registered.push(provider) } } }
-    apply(ctx, providerConfig())
-    assert.equal(registered.length, 1)
+    const ctx = harnessCtx({ withSeam: true })
+    apply(ctx, {})
+    assert.equal(ctx.registered.length, 1)
   } finally {
     console.warn = originalWarn
   }
   assert.equal(messages.length, 0)
 })
 
-test('apply() warns with an actionable hint when credentials are not visible', () => {
+test('apply() stays silent when literal credentials are in the config (no seam)', () => {
   const messages = []
   const originalWarn = console.warn
   console.warn = (message) => { messages.push(message) }
   try {
-    process.env.YANDEX_API_KEY = ''
-    delete process.env.YANDEX_API_KEY
-    delete process.env.YANDEX_FOLDER_ID
-    const registered = []
-    const ctx = { web: { registerSearchProvider: (provider) => { registered.push(provider) } } }
+    const ctx = harnessCtx({ withSeam: false })
+    apply(ctx, providerConfig())
+    assert.equal(ctx.registered.length, 1)
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(messages.length, 0)
+})
+
+test('apply() warns with an actionable hint when no credential source exists', () => {
+  const messages = []
+  const originalWarn = console.warn
+  console.warn = (message) => { messages.push(message) }
+  try {
+    const ctx = harnessCtx({ withSeam: false })
     apply(ctx, {})
-    assert.equal(registered.length, 1)
+    assert.equal(ctx.registered.length, 1)
   } finally {
     console.warn = originalWarn
   }
