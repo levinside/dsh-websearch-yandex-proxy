@@ -9,11 +9,14 @@
 ```
 web_search (модельный тул)
    └─ ctx.web → WebSearchProvider id "yandex" (плагин, в процессе харнеса)
-        └─ Yandex Cloud Search API (REST v2, Api-Key)
+        └─ Yandex Cloud Search API (REST v2, Api-Key) — отложенный режим:
+             1. POST searchAsync                     → { id: "<operation-id>", done: false }
+             2. GET operation.api.cloud.yandex.net/… → поллинг до { done: true }
+             3. response.rawData (base64-XML)        → источники
              └─ результаты → web_search_tool_result + text.citations → модель
 ```
 
-Плагин реализует интерфейс `WebSearchProvider` шва `ctx.web`, вызывает `lib/yandex-api.mjs` (парсинг base64-XML, вырезка `<hlword>`) и возвращает источники в формате, который тул уже умеет рендерить. Запрос к харнесу — один на «одну выдачу» (см. [Ограничения](#ограничения-и-честные-оговорки)).
+Плагин реализует интерфейс `WebSearchProvider` шва `ctx.web`, вызывает `lib/yandex-api.mjs` (submit `searchAsync`, опрос операции, парсинг base64-XML, вырезка `<hlword>`) и возвращает источники в формате, который тул уже умеет рендерить. Поиск идёт в **отложенном (deferred) режиме** — он в ~16 раз дешевле синхронного (см. [Синхронный vs отложенный режим](#синхронный-vs-отложенный-режим)). Запрос к харнесу — один на «одну выдачу» (см. [Ограничения](#ограничения-и-честные-оговорки)).
 
 ### Файлы
 
@@ -76,7 +79,7 @@ web_search (модельный тул)
 |---|---|---|---|
 | `apiKey` / `apiKeyEnv` | `YANDEX_API_KEY` | Ключ поиска (`AQVN...`) | — |
 | `folderId` / `folderIdEnv` | `YANDEX_FOLDER_ID` | Каталог Yandex Cloud | — |
-| `baseURL` | `YANDEX_SEARCH_API_URL` | Endpoint API | `https://searchapi.api.cloud.yandex.net/v2/web/search` |
+| `baseURL` | `YANDEX_SEARCH_API_URL` | Endpoint API (deferred `searchAsync`) | `https://searchapi.api.cloud.yandex.net/v2/web/searchAsync` |
 | `searchType` | `YANDEX_SEARCH_TYPE` | Сегмент выдачи | `SEARCH_TYPE_COM` |
 | `l10n` | `YANDEX_L10N` | Локализация | `LOCALIZATION_COM` |
 | `maxResults` | `YANDEX_MAX_RESULTS` | Верхняя граница источников | `10` |
@@ -86,6 +89,26 @@ web_search (модельный тул)
 **Сколько приходит ответов (каскад «10 → 8»).** `maxResults` (по умолчанию `10`) — верхняя граница, которую плагин просит у API (`groupsOnPage`) и которой обрезает парсинг. Сверху тул-слой харнеса дополнительно режет выдачу до 8, поэтому модель видит не больше 8 результатов. Дефолт держим на `10` как запас: если кап тул-слоя поднимут, модель сразу получит больше без правки конфига.
 
 При неработающих кредах плагин пишет в лог понятное предупреждение (`set config apiKey/folderId or export YANDEX_API_KEY / YANDEX_FOLDER_ID`).
+
+## Синхронный vs отложенный режим
+
+Плагин работает в **отложенном (deferred/async)** режиме: синхронный эндпоинт `POST /v2/web/search` (ответ содержит результаты сразу) заменён на `searchAsync` + опрос операции. Причина — тариф: отложенный режим **в ~16 раз дешевле** синхронного.
+
+| Режим | Тариф, ₽ за 1000 запросов |
+|---|---|
+| Синхронный, дневной | 488 |
+| Синхронный, ночной | 366 |
+| **Отложенный** | **30,5** |
+
+Актуальные цены и условия: [Правила тарификации Yandex Search API](https://aistudio.yandex.ru/ru/docs/search-api/pricing).
+
+Как устроен флоу (тело запроса — то же, что у синхронного режима):
+
+1. `POST https://searchapi.api.cloud.yandex.net/v2/web/searchAsync` с `Authorization: Api-Key …` — ответ `{"id": "<operation-id>", "done": false}`: это **не результаты**, а идентификатор операции.
+2. `GET https://operation.api.cloud.yandex.net/operations/<operation-id>` (тот же `Api-Key`) — опрос до `{"done": true, "response": {"rawData": "<base64 XML>"}}`. Операция обычно готова за доли секунды; плагин опрашивает с первым интервалом ~300 мс и шагом ~500 мс, с общим бюджетом времени ~20 с. При HTTP 429/5xx опрос повторяется с паузой, при `AbortSignal` ожидание прерывается сразу.
+3. Из `response.rawData` (base64-декодированный XML) парсятся `<doc>`-элементы. Пустая выдача приходит как `<error code="15">` («комбинация слов нигде не встречается») — это не ошибка, а пустой список результатов.
+
+Тарифицируется запуск поиска (`searchAsync`), а не опрос статуса операции.
 
 ## Проверка и диагностика
 
@@ -118,15 +141,20 @@ dsh --profile web --dump-config   # в дереве: id: web-search-yandex; deep
 
 ```bash
 npm test   # node --test provider.test.mjs lib/yandex-api.test.mjs — плагин: резолв опций,
-           # available(), нормализация, maxResults, обрезка queryText до 400 символов
+           # available(), нормализация, maxResults, отложенный флоу searchAsync → опрос операции
+           # (повтор поллинга при 429/5xx, таймаут поллинга, abort, operation.error,
+           # пустая выдача через <error code="15">), обрезка queryText до 400 символов
            # (+ лог-предупреждение при обрезке), маппинг ошибок (WEB_PROVIDER_ERROR/WEB_ABORTED),
            # регистрация через apply()
 ```
+
+Тесты не ходят в сеть: `lib/yandex-api.test.mjs` стабит `globalThis.fetch` (submit + серии poll-ответов), `provider.test.mjs` инжектит фейковый бэкенд.
 
 ## Ограничения и честные оговорки
 
 - **Метаданные**: `publishedAt` не заполняются (API не отдаёт надёжную дату публикации).
 - **Длина запроса**: `queryText` ограничен Yandex до 400 символов; плагин обрезает запрос до этой длины по Unicode code points, не разбивая суррогатные пары (эмодзи).
+- **Отложенный режим**: на одну выдачу уходит больше одного HTTP-вызова (submit `searchAsync` + опросы операции), но тарифицируется только запуск поиска; для тула и модели поведение не отличается от синхронного.
 - **Один запрос — один поиск**: `max_uses > 1` не превращается в несколько поисков; контракт тула от этого не страдает.
 
 ## Лицензия
