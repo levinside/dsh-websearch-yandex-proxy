@@ -79,9 +79,11 @@ web_search (модельный тул)
 | `baseURL` | `YANDEX_SEARCH_API_URL` | Endpoint API | `https://searchapi.api.cloud.yandex.net/v2/web/search` |
 | `searchType` | `YANDEX_SEARCH_TYPE` | Сегмент выдачи | `SEARCH_TYPE_COM` |
 | `l10n` | `YANDEX_L10N` | Локализация | `LOCALIZATION_COM` |
-| `maxResults` | `YANDEX_MAX_RESULTS` | Верхняя граница источников | `10` (тул-слой режет до 8) |
+| `maxResults` | `YANDEX_MAX_RESULTS` | Верхняя граница источников | `10` |
 
 Сегмент по умолчанию — международный (`SEARCH_TYPE_COM`), он лучше подходит для свежего глобального контента (в т.ч. AI-новостей). Для выдачи по Рунету/русскоязычной повестке задай `SEARCH_TYPE_RU` + `LOCALIZATION_RU`.
+
+**Сколько приходит ответов (каскад «10 → 8»).** `maxResults` (по умолчанию `10`) — верхняя граница, которую плагин просит у API (`groupsOnPage`) и которой обрезает парсинг. Сверху тул-слой харнеса дополнительно режет выдачу до 8, поэтому модель видит не больше 8 результатов. Дефолт держим на `10` как запас: если кап тул-слоя поднимут, модель сразу получит больше без правки конфига.
 
 При неработающих кредах плагин пишет в лог понятное предупреждение (`set config apiKey/folderId or export YANDEX_API_KEY / YANDEX_FOLDER_ID`).
 
