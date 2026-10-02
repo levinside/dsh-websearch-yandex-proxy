@@ -85,6 +85,9 @@ function readBody(request, maxBytes) {
 }
 
 function json(response, statusCode, payload) {
+  // The client may have disconnected while the backend was still running
+  // (abort); writing to a destroyed/ended response would throw.
+  if (response.writableEnded || response.destroyed) return
   const body = JSON.stringify(payload)
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -95,6 +98,7 @@ function json(response, statusCode, payload) {
 }
 
 function text(response, statusCode, body) {
+  if (response.writableEnded || response.destroyed) return
   response.writeHead(statusCode, {
     'content-type': 'text/plain; charset=utf-8',
     'content-length': Buffer.byteLength(body),
@@ -155,6 +159,14 @@ export function createProxyServer(config) {
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(new Error(`backend timed out after ${config.requestTimeoutMs} ms`)), config.requestTimeoutMs)
+    // A client disconnect (e.g. the harness's web_search call was cancelled)
+    // aborts the in-flight backend search too, so upstream work stops and the
+    // failure path maps to the same 504/abort semantics as a timeout. On
+    // modern Node the reliable signal is the response socket closing before
+    // the response was ended; `request`'s 'aborted' is kept as a fallback.
+    const disconnect = () => controller.abort(new Error('client disconnected'))
+    response.on('close', () => { if (!response.writableEnded) disconnect() })
+    request.on('aborted', disconnect)
     try {
       const result = await handleMessages(body, { config, signal: controller.signal })
       json(response, 200, result)
@@ -165,7 +177,9 @@ export function createProxyServer(config) {
         // Checked before the backend error types: an abort is wrapped by the
         // backends into their own error classes, and a timeout must surface
         // as 504 rather than their default 502.
-        adapterError(response, 504, `search aborted or timed out: ${String(controller.signal.reason ?? '')}`)
+        const reason = controller.signal.reason
+        const detail = reason instanceof Error ? reason.message : String(reason ?? '')
+        adapterError(response, 504, `search aborted or timed out: ${detail}`)
       } else if (error instanceof yandexApi.YandexApiError || error instanceof yandexScrape.YandexScrapeError) {
         adapterError(response, error.status ?? 502, `${error.message}`)
       } else {

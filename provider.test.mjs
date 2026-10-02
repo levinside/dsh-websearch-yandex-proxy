@@ -91,11 +91,13 @@ test('available() requires key, folder id and a parseable URL', () => {
   assert.equal(new YandexSearchProvider(providerOptions(providerConfig())).available(), true)
   assert.equal(new YandexSearchProvider(providerOptions(providerConfig({ apiKey: '' }))).available(), false)
   assert.equal(new YandexSearchProvider(providerOptions(providerConfig({ folderId: '' }))).available(), false)
+  assert.equal(new YandexSearchProvider(providerOptions(providerConfig({ baseURL: 'not a url' }))).available(), false)
 })
 
 test('resolveOptions normalizes invalid maxResults to the default', () => {
   assert.equal(resolveOptions(providerConfig({ maxResults: 0 })).maxResults, 10)
   assert.equal(resolveOptions(providerConfig({ maxResults: 3 })).maxResults, 3)
+  assert.equal(resolveOptions(providerConfig({ maxResults: '7' })).maxResults, 10)
 })
 
 // ── search normalization ─────────────────────────────────────────────────────
@@ -193,4 +195,22 @@ test('apply() registers the provider into a ctx.web-shaped service', () => {
   assert.equal(registered.length, 1)
   assert.equal(registered[0].id, YANDEX_PROVIDER_ID)
   assert.equal(registered[0].available(), true)
+})
+
+test('apply() warns with an actionable hint when credentials are missing', () => {
+  const messages = []
+  const originalWarn = console.warn
+  console.warn = (message) => { messages.push(message) }
+  try {
+    const registered = []
+    const ctx = { web: { registerSearchProvider: (provider) => { registered.push(provider) } } }
+    apply(ctx, {})
+    assert.equal(registered.length, 1)
+    assert.equal(registered[0].available(), false)
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(messages.length, 1)
+  assert.match(messages[0], /unavailable/)
+  assert.match(messages[0], /YANDEX_API_KEY/)
 })
