@@ -298,32 +298,18 @@ test('apply() stays silent when the harness has a credentials seam', () => {
   assert.equal(messages.length, 0)
 })
 
-test('apply() stays silent when literal credentials are in the config (no seam)', () => {
+test('apply() never warns at apply time (search-time errors carry the signal)', () => {
   const messages = []
   const originalWarn = console.warn
   console.warn = (message) => { messages.push(message) }
   try {
-    const ctx = harnessCtx({ withSeam: false })
-    apply(ctx, providerConfig())
-    assert.equal(ctx.registered.length, 1)
-  } finally {
-    console.warn = originalWarn
-  }
-  assert.equal(messages.length, 0)
-})
-
-test('apply() warns with an actionable hint when no credential source exists', () => {
-  const messages = []
-  const originalWarn = console.warn
-  console.warn = (message) => { messages.push(message) }
-  try {
+    // Neither a literal nor a seam is visible — apply() stays silent anyway,
+    // because the credentials service may register later in startup order.
     const ctx = harnessCtx({ withSeam: false })
     apply(ctx, {})
     assert.equal(ctx.registered.length, 1)
   } finally {
     console.warn = originalWarn
   }
-  assert.equal(messages.length, 1)
-  assert.match(messages[0], /credentials/)
-  assert.match(messages[0], /YANDEX_API_KEY/)
+  assert.equal(messages.length, 0)
 })
