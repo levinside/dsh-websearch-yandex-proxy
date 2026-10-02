@@ -73,22 +73,31 @@ web_search (модельный тул)
 
 ## Конфигурация
 
-Ключи и опции берутся из конфига строки плагина, при отсутствии — из переменных окружения харнеса:
+Все опции берутся из конфига строки плагина. Переменные окружения (`.env`) не используются — секреты живут в реестре креденшелов харнеса (см. ниже).
 
-| Конфиг строки | Env | Назначение | По умолчанию |
-|---|---|---|---|
-| `apiKey` / `apiKeyEnv` | `YANDEX_API_KEY` | Ключ поиска (`AQVN...`) | — |
-| `folderId` / `folderIdEnv` | `YANDEX_FOLDER_ID` | Каталог Yandex Cloud | — |
-| `baseURL` | `YANDEX_SEARCH_API_URL` | Endpoint API (deferred `searchAsync`) | `https://searchapi.api.cloud.yandex.net/v2/web/searchAsync` |
-| `searchType` | `YANDEX_SEARCH_TYPE` | Сегмент выдачи | `SEARCH_TYPE_COM` |
-| `l10n` | `YANDEX_L10N` | Локализация | `LOCALIZATION_COM` |
-| `maxResults` | `YANDEX_MAX_RESULTS` | Верхняя граница источников | `10` |
+| Конфиг строки | Назначение | По умолчанию |
+|---|---|---|
+| `apiKey` / `apiKeyRef` | Литеральный ключ / имя credential-ref’а в реестре (нежирный: литерал кладёт секрет в конфиг) | `YANDEX_API_KEY` |
+| `folderId` / `folderIdRef` | Литеральный folder id / имя credential-ref’а | `YANDEX_FOLDER_ID` |
+| `baseURL` | Endpoint API (deferred `searchAsync`) | `https://searchapi.api.cloud.yandex.net/v2/web/searchAsync` |
+| `searchType` | Сегмент выдачи | `SEARCH_TYPE_COM` |
+| `l10n` | Локализация | `LOCALIZATION_COM` |
+| `maxResults` | Верхняя граница источников | `10` |
+
+### Где хранятся секреты
+
+Ключ и folder id резолвятся так (без любого участия env):
+
+1. **Литерал в конфиге** — `apiKey` / `folderId` (не рекомендуется: секрет попадает в конфиг строки плагина).
+2. **Credential-seam харнеса** — `ctx.credentials.resolve(имя_ref)`: страница **Models** в вебе харнеса хранит значения в `~/.dsh/.credentials.yaml` (секция `refs:`). Имя ref’а берётся из `apiKeyRef` / `folderIdRef`. Это основной путь.
+
+Секретов в конфиге нет, `.env` не нужен и не читается. Если значение уже лежит в `.credentials.yaml` под именем `YANDEX_API_KEY` / `YANDEX_FOLDER_ID`, плагин найдёт его через seam при каждом поиске (асинхронно, с учётом `AbortSignal`, без кэширования в провайдере).
 
 Сегмент по умолчанию — международный (`SEARCH_TYPE_COM`), он лучше подходит для свежего глобального контента (в т.ч. AI-новостей). Для выдачи по Рунету/русскоязычной повестке задай `SEARCH_TYPE_RU` + `LOCALIZATION_RU`.
 
 **Сколько приходит ответов (каскад «10 → 8»).** `maxResults` (по умолчанию `10`) — верхняя граница, которую плагин просит у API (`groupsOnPage`) и которой обрезает парсинг. Сверху тул-слой харнеса дополнительно режет выдачу до 8, поэтому модель видит не больше 8 результатов. Дефолт держим на `10` как запас: если кап тул-слоя поднимут, модель сразу получит больше без правки конфига.
 
-При неработающих кредах плагин пишет в лог понятное предупреждение (`set config apiKey/folderId or export YANDEX_API_KEY / YANDEX_FOLDER_ID`).
+Если в харнесе нет credential-сервиса и в конфиге нет литералов, плагин пишет в лог предупреждение с подсказкой; если ref’ы не находятся и к моменту поиска — поиск падает с читаемой ошибкой `WEB_PROVIDER_CREDENTIAL_MISSING` (перечисляет недостающие ref’ы и способы их задать).
 
 ## Синхронный vs отложенный режим
 
@@ -124,6 +133,7 @@ dsh --profile web --dump-config   # в дереве: id: web-search-yandex; deep
 |---|---|
 | `configured web provider "yandex" is not registered` | харнес не перезапущен — перезапусти |
 | `entry "web-search-yandex" not found` | пакет не в `bundles` или не переустановлен |
+| `WEB_PROVIDER_CREDENTIAL_MISSING` | ref’ы (`YANDEX_API_KEY` / `YANDEX_FOLDER_ID`) не найдены при поиске — сохрани их на странице Models (секция `refs:`) или пропиши литерал `apiKey`/`folderId` в конфиг |
 | `403 PermissionDenied` | роль/ключ не на том каталоге; создай ключ в карточке Search API |
 
 ## Настройка Yandex Cloud Search API (один раз)
@@ -133,6 +143,8 @@ dsh --profile web --dump-config   # в дереве: id: web-search-yandex; deep
 3. Создайте **сервисный аккаунт** и выдайте ему роль **`search-api.webSearch.user`** на каталог.
 4. Создайте ключ **в карточке сервиса Yandex Search API**: он выдаёт специальный ключ с областью `yc.search-api.execute` (строка `AQVN...`), привязанный к сервисному аккаунту. Обычный «API-ключ» из раздела «Сервисные аккаунты» может не заработать: без области/роли сервис вернёт `403 PermissionDenied`.
 
+5. Положите ключ и folder id в харнес: страница **Models** (пишет значения в `~/.dsh/.credentials.yaml`, раздел `refs:` под именами `YANDEX_API_KEY` / `YANDEX_FOLDER_ID`). Тогда в конфиге строки плагина достаточно `apiKeyRef: YANDEX_API_KEY` / `folderIdRef: YANDEX_FOLDER_ID` — секретов в конфиге нет (см. «Где хранятся секреты»).
+
 Тарификация сервиса (цены за запросы, квоты и как их увеличить): [Правила тарификации Yandex Search API](https://aistudio.yandex.ru/ru/docs/search-api/pricing). Списание — за запрос; квота на число запросов в сутки задаётся в консоли сервиса («Увеличить квоту»).
 
 Описания полей API взяты из [официальной документации](https://aistudio.yandex.ru/ru/docs/search-api/) и сверены с рабочей реализацией SearXNG-движка для Yandex Cloud Search.
@@ -140,11 +152,12 @@ dsh --profile web --dump-config   # в дереве: id: web-search-yandex; deep
 ## Тесты
 
 ```bash
-npm test   # node --test provider.test.mjs lib/yandex-api.test.mjs — плагин: резолв опций,
-           # available(), нормализация, maxResults, отложенный флоу searchAsync → опрос операции
-           # (повтор поллинга при 429/5xx, таймаут поллинга, abort, operation.error,
-           # пустая выдача через <error code="15">), обрезка queryText до 400 символов
-           # (+ лог-предупреждение при обрезке), маппинг ошибок (WEB_PROVIDER_ERROR/WEB_ABORTED),
+npm test   # node --test provider.test.mjs lib/yandex-api.test.mjs — плагин: резолв опций и
+           # креденшелов (литерал > credential-seam; env не используется), available(),
+           # нормализация, maxResults, отложенный флоу searchAsync → опрос операции
+           # (повтор поллинга при 429/5xx, таймаут, abort, operation.error, пустая выдача
+           # через <error code="15">), обрезка queryText до 400 символов (+ лог при обрезке),
+           # маппинг ошибок (WEB_PROVIDER_ERROR/WEB_ABORTED/WEB_PROVIDER_CREDENTIAL_MISSING),
            # регистрация через apply()
 ```
 

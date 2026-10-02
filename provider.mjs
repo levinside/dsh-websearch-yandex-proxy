@@ -20,14 +20,25 @@ export const YANDEX_PROVIDER_ID = 'yandex'
 /** Error code consumers may match against (mirrors the seam's WEB_PROVIDER_ERROR). */
 export const WEB_PROVIDER_ERROR = 'WEB_PROVIDER_ERROR'
 
+/** Error code for a search that cannot resolve its API key / folder id. */
+export const WEB_PROVIDER_CREDENTIAL_MISSING = 'WEB_PROVIDER_CREDENTIAL_MISSING'
+
 /**
  * @typedef {object} ProviderOptions
- * @property {string} yandexApiKey
- * @property {string} yandexFolderId
+ * @property {string} yandexApiKey         — literal key from config (may be empty)
+ * @property {string} yandexApiKeyRef      — credential ref name in the Models registry
+ * @property {string} yandexFolderId       — literal folder id (may be empty)
+ * @property {string} yandexFolderIdRef    — credential ref name in the Models registry
  * @property {string} yandexSearchApiUrl
  * @property {string} yandexSearchType
  * @property {string} yandexL10n
  * @property {number} maxResults
+ */
+
+/**
+ * One operation's resolved secrets, or empty strings when not resolvable.
+ * @callback ResolveCredentials
+ * @returns {Promise<{ yandexApiKey?: string, yandexFolderId?: string }>}
  */
 
 /**
@@ -42,11 +53,13 @@ export const WEB_PROVIDER_ERROR = 'WEB_PROVIDER_ERROR'
  * @param {() => ProviderOptions} resolveOptions - snapshot for the NEXT
  *   operation; a thunk so profile-config changes are honored between searches.
  * @param {RunSearch} [runSearch]
+ * @param {ResolveCredentials} [resolveCredentials]
  */
 export class YandexSearchProvider {
-  constructor(resolveOptions, runSearch = searchYandex) {
+  constructor(resolveOptions, runSearch = searchYandex, resolveCredentials = async () => ({})) {
     this.resolveOptions = resolveOptions
     this.runSearch = runSearch
+    this.resolveCredentials = resolveCredentials
   }
 
   id = YANDEX_PROVIDER_ID
@@ -54,9 +67,10 @@ export class YandexSearchProvider {
   /** Cheap local usability check; must not make network calls. */
   available() {
     const options = this.resolveOptions()
-    return options.yandexApiKey.length > 0
-      && options.yandexFolderId.length > 0
-      && URL.canParse(options.yandexSearchApiUrl)
+    // A ref name is always present (it defaults), and whether it resolves is
+    // decided at search time through the seam — so availability is about the
+    // structurally runnable parts only, mirroring the harness's own providers.
+    return URL.canParse(options.yandexSearchApiUrl)
       && Number.isInteger(options.maxResults) && options.maxResults > 0
   }
 
@@ -70,6 +84,21 @@ export class YandexSearchProvider {
    */
   async search(request, signal) {
     const options = this.resolveOptions()
+    const resolved = await this.resolveCredentials()
+    const yandexApiKey = resolved.yandexApiKey
+    const yandexFolderId = resolved.yandexFolderId
+    if (!yandexApiKey || !yandexFolderId) {
+      const missing = []
+      if (!yandexApiKey) missing.push(`"${options.yandexApiKeyRef}"`)
+      if (!yandexFolderId) missing.push(`"${options.yandexFolderIdRef}"`)
+      const credentialError = new Error(
+        `Yandex web search has no credentials for ${missing.join(' and ')}; `
+        + 'store them in the web Models credentials page (a ref with that name) '
+        + 'or set a literal apiKey/folderId in the web-search-yandex config',
+      )
+      credentialError.code = WEB_PROVIDER_CREDENTIAL_MISSING
+      throw credentialError
+    }
     const maxResults = Math.min(
       request.maxResults ?? options.maxResults,
       options.maxResults,
@@ -77,7 +106,7 @@ export class YandexSearchProvider {
     try {
       const sources = await this.runSearch({
         query: request.query,
-        config: { ...options, maxResults },
+        config: { ...options, yandexApiKey, yandexFolderId, maxResults },
         signal,
       })
       return { sources, truncated: false }

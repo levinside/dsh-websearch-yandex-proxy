@@ -7,7 +7,10 @@
  *
  * The plugin is dependency-free on purpose: profile-installed plugins in this
  * setup resolve only their own module tree, so there are no `@deepseek-ai/*`
- * imports. Options come from the row's `config` with environment fallbacks.
+ * imports. Secrets are resolved the same way the harness's own providers do
+ * it — through the `ctx.credentials` seam (the web Models page refs stored in
+ * `~/.dsh/.credentials.yaml`), with a literal `config.apiKey` / `folderId` as
+ * the only fallback. There is no environment-variable layer.
  */
 
 import { YandexSearchProvider, YANDEX_PROVIDER_ID } from './provider.mjs'
@@ -22,13 +25,19 @@ export { YANDEX_PROVIDER_ID } from './provider.mjs'
 
 /**
  * Config keys (read from the plugin row's `config`, no schema required):
- *   apiKey / apiKeyEnv      — literal key or env var name (default YANDEX_API_KEY)
- *   folderId / folderIdEnv  — literal folder id or env var (default YANDEX_FOLDER_ID)
+ *   apiKey / apiKeyRef      — literal key, or credential ref name in the web
+ *                             Models credentials registry (default YANDEX_API_KEY)
+ *   folderId / folderIdRef  — literal folder id, or credential ref name
+ *                             (default YANDEX_FOLDER_ID)
  *   baseURL                 — search API URL (default: the public Yandex Cloud
  *                            searchAsync endpoint — deferred/async mode)
  *   searchType              — SERP segment (default SEARCH_TYPE_COM)
  *   l10n                    — localization (default LOCALIZATION_COM)
  *   maxResults              — upper bound on sources (default 10)
+ *
+ * Credential precedence: literal config value wins; otherwise the ref is
+ * resolved through the harness `ctx.credentials` seam (Models page /
+ * `.credentials.yaml` refs). No process environment is consulted.
  */
 
 const DEFAULT_SEARCH_API_URL = 'https://searchapi.api.cloud.yandex.net/v2/web/searchAsync'
@@ -40,13 +49,13 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.length > 0
 }
 
-/** Resolve one fully-defaulted options snapshot from config + environment. */
+/** Resolve one fully-defaulted non-secret options snapshot from config. */
 export function resolveOptions(config = {}) {
-  const apiKeyEnv = nonEmpty(config.apiKeyEnv) ? config.apiKeyEnv : 'YANDEX_API_KEY'
-  const folderIdEnv = nonEmpty(config.folderIdEnv) ? config.folderIdEnv : 'YANDEX_FOLDER_ID'
   return {
-    yandexApiKey: nonEmpty(config.apiKey) ? config.apiKey : (process.env[apiKeyEnv] ?? ''),
-    yandexFolderId: nonEmpty(config.folderId) ? config.folderId : (process.env[folderIdEnv] ?? ''),
+    yandexApiKey: nonEmpty(config.apiKey) ? config.apiKey : '',
+    yandexApiKeyRef: nonEmpty(config.apiKeyRef) ? config.apiKeyRef : 'YANDEX_API_KEY',
+    yandexFolderId: nonEmpty(config.folderId) ? config.folderId : '',
+    yandexFolderIdRef: nonEmpty(config.folderIdRef) ? config.folderIdRef : 'YANDEX_FOLDER_ID',
     yandexSearchApiUrl: nonEmpty(config.baseURL) ? config.baseURL : DEFAULT_SEARCH_API_URL,
     yandexSearchType: nonEmpty(config.searchType) ? config.searchType : DEFAULT_SEARCH_TYPE,
     yandexL10n: nonEmpty(config.l10n) ? config.l10n : DEFAULT_L10N,
@@ -56,25 +65,69 @@ export function resolveOptions(config = {}) {
   }
 }
 
+/** Resolve one credential: a literal config value wins, else the seam. */
+async function resolveCredential(ctx, { literal, refName }) {
+  if (nonEmpty(literal)) return literal
+  const credentials = typeof ctx?.get === 'function' ? ctx.get('credentials') : undefined
+  if (credentials && typeof credentials.resolve === 'function') {
+    try {
+      const resolved = await credentials.resolve(refName)
+      if (resolved && nonEmpty(resolved.value)) return resolved.value
+    } catch {
+      // an unresolvable ref yields no credential
+    }
+  }
+  return undefined
+}
+
 /**
- * Register the provider with `ctx.web`. The thunk defers option resolution to
- * each operation, so every search uses one consistent snapshot. On a
- * profile-config reload the row is re-applied with a fresh config object and
- * the seam auto-disposes the old provider, so new endpoint/keys take effect
- * without manual unregistration (no duplicate-id failures).
+ * Resolve the secret key and folder id for the next search through the
+ * harness credential seam. This is async: the seam handshake may round-trip,
+ * and DSH resolves credentials per operation so a settings rewrite landing
+ * mid-flight never mixes sections.
+ */
+export async function resolveCredentials(ctx, config = {}) {
+  const apiKeyRef = nonEmpty(config.apiKeyRef) ? config.apiKeyRef : 'YANDEX_API_KEY'
+  const folderIdRef = nonEmpty(config.folderIdRef) ? config.folderIdRef : 'YANDEX_FOLDER_ID'
+  return {
+    yandexApiKey: await resolveCredential(ctx, { literal: config.apiKey, refName: apiKeyRef }),
+    yandexFolderId: await resolveCredential(ctx, { literal: config.folderId, refName: folderIdRef }),
+  }
+}
+
+/**
+ * Register the provider with `ctx.web`. Non-secret options are snapshotted
+ * through a thunk; the secret key/folder id are resolved through the
+ * credential seam at each search. On a profile-config reload the row is
+ * re-applied with a fresh config object and the seam auto-disposes the old
+ * provider, so new endpoint/keys take effect without manual unregistration
+ * (no duplicate-id failures).
  */
 export function apply(ctx, config = {}) {
-  const provider = new YandexSearchProvider(() => resolveOptions(config))
+  const provider = new YandexSearchProvider(
+    () => resolveOptions(config),
+    undefined,
+    () => resolveCredentials(ctx, config),
+  )
   ctx.web.registerSearchProvider(provider)
-  // A missing key/folder id makes the provider silently unavailable: emit one
-  // actionable line at apply time so a typo in an env var name or a missing
-  // credential does not end up as a puzzling "no usable web provider" later.
-  if (!provider.available()) {
-    const apiKeyEnv = nonEmpty(config.apiKeyEnv) ? config.apiKeyEnv : 'YANDEX_API_KEY'
-    const folderIdEnv = nonEmpty(config.folderIdEnv) ? config.folderIdEnv : 'YANDEX_FOLDER_ID'
+  // Heads-up only when there is no credential source at all: no literal
+  // config value and no harness credentials service. A present service can
+  // still resolve a ref at search time, but the most common cause of an empty
+  // search is a missing credential, so surface the fix early.
+  const options = resolveOptions(config)
+  const credentials = typeof ctx?.get === 'function' ? ctx.get('credentials') : undefined
+  const hasSeam = credentials !== undefined && typeof credentials.resolve === 'function'
+  const missingKey = !nonEmpty(options.yandexApiKey) && !hasSeam
+  const missingFolderId = !nonEmpty(options.yandexFolderId) && !hasSeam
+  if (missingKey || missingFolderId) {
+    const missing = []
+    if (missingKey) missing.push(`"${options.yandexApiKeyRef}"`)
+    if (missingFolderId) missing.push(`"${options.yandexFolderIdRef}"`)
     console.warn(
-      'dsh-web-search-yandex: provider registered but unavailable — '
-      + `set config apiKey/folderId or export ${apiKeyEnv} / ${folderIdEnv}`,
+      'dsh-web-search-yandex: provider registered but no credential source is available — '
+      + `the harness has no credentials service and no literal apiKey/folderId is set; `
+      + `store ${missing.join(' and ')} via the web Models credentials page `
+      + 'or set literal apiKey/folderId in the web-search-yandex config',
     )
   }
 }
