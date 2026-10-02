@@ -1,5 +1,5 @@
 /**
- * Tests for the native Yandex search provider (Variant B).
+ * Tests for the native Yandex search provider plugin.
  * Run with `node --test test.mjs provider.test.mjs`.
  */
 

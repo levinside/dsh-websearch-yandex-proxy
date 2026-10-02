@@ -1,5 +1,5 @@
 /**
- * Cordis plugin entry for the native Yandex search provider (Variant B).
+ * Cordis plugin entry for the native Yandex search provider (no HTTP proxy hop).
  *
  * Registers a `YandexSearchProvider` into `ctx.web` so the model-facing
  * `web_search` tool (owned by `tool-web`, unchanged) searches the Yandex Cloud

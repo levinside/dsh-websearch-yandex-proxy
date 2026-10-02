@@ -1,9 +1,9 @@
 /**
  * Local Anthropic Messages API proxy for the DeepSeek Harness `web_search`
- * tool, backed by Yandex search. This is **Variant A** — a standalone process
- * the harness's `web-search-deepseek` plugin is pointed at via its endpoint;
- * the native in-process provider plugin (Variant B, `plugin/`) does not go
- * through this HTTP contract.
+ * tool, backed by Yandex search. This is the standalone proxy: a separate
+ * process the harness's `web-search-deepseek` plugin is pointed at via its
+ * endpoint. The in-process native provider plugin (`index.mjs`) does not go
+ * through this HTTP contract; this server exists for debugging/isolation.
  *
  * Point the harness's web-search-deepseek plugin at this server (base URL) and
  * it keeps using the exact same model-facing `web_search` tool while the
