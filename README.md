@@ -110,18 +110,23 @@ dsh --profile web --dump-config   # в дереве: id: web-search-yandex; deep
 3. Создайте **сервисный аккаунт** и выдайте ему роль **`search-api.webSearch.user`** на каталог.
 4. Создайте ключ **в карточке сервиса Yandex Search API**: он выдаёт специальный ключ с областью `yc.search-api.execute` (строка `AQVN...`), привязанный к сервисному аккаунту. Обычный «API-ключ» из раздела «Сервисные аккаунты» может не заработать: без области/роли сервис вернёт `403 PermissionDenied`.
 
+Тарификация сервиса (цены за запросы, квоты и как их увеличить): [Правила тарификации Yandex Search API](https://aistudio.yandex.ru/ru/docs/search-api/pricing). Списание — за запрос; квота на число запросов в сутки задаётся в консоли сервиса («Увеличить квоту»).
+
 Описания полей API взяты из [официальной документации](https://aistudio.yandex.ru/ru/docs/search-api/) и сверены с рабочей реализацией SearXNG-движка для Yandex Cloud Search.
 
 ## Тесты
 
 ```bash
-npm test   # node --test provider.test.mjs — плагин: резолв опций, available(), нормализация,
-           # maxResults, маппинг ошибок (WEB_PROVIDER_ERROR/WEB_ABORTED), регистрация через apply()
+npm test   # node --test provider.test.mjs lib/yandex-api.test.mjs — плагин: резолв опций,
+           # available(), нормализация, maxResults, обрезка queryText до 400 символов
+           # (+ лог-предупреждение при обрезке), маппинг ошибок (WEB_PROVIDER_ERROR/WEB_ABORTED),
+           # регистрация через apply()
 ```
 
 ## Ограничения и честные оговорки
 
 - **Метаданные**: `publishedAt` не заполняются (API не отдаёт надёжную дату публикации).
+- **Длина запроса**: `queryText` ограничен Yandex до 400 символов; плагин обрезает запрос до этой длины по Unicode code points, не разбивая суррогатные пары (эмодзи).
 - **Один запрос — один поиск**: `max_uses > 1` не превращается в несколько поисков; контракт тула от этого не страдает.
 
 ## Лицензия
