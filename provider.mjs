@@ -2,8 +2,7 @@
  * A native `WebSearchProvider` for the DeepSeek Harness `ctx.web` seam, backed
  * by the official Yandex Cloud Search API.
  *
- * The harness process calls Yandex directly through `./lib/yandex-api.mjs` —
- * the same canonical client the standalone `server.mjs` proxy uses — and
+ * The harness process calls Yandex directly through `./lib/yandex-api.mjs` and
  * returns normalized `WebSearchSource[]`, the same shape the model-facing
  * `web_search` tool already renders, so the client part stays byte-identical.
  *

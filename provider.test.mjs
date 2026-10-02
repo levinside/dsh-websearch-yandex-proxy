@@ -1,6 +1,6 @@
 /**
  * Tests for the native Yandex search provider plugin.
- * Run with `node --test test.mjs provider.test.mjs`.
+ * Run with `node --test provider.test.mjs`.
  */
 
 import { test } from 'node:test'
