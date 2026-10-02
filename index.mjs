@@ -98,10 +98,13 @@ export async function resolveCredentials(ctx, config = {}) {
 /**
  * Register the provider with `ctx.web`. Non-secret options are snapshotted
  * through a thunk; the secret key/folder id are resolved through the
- * credential seam at each search. On a profile-config reload the row is
- * re-applied with a fresh config object and the seam auto-disposes the old
- * provider, so new endpoint/keys take effect without manual unregistration
- * (no duplicate-id failures).
+ * credential seam at each search. Missing credentials never warn at apply
+ * time (mirroring the harness's own providers): the service may register
+ * after this plugin in startup order, and a search that cannot resolve its
+ * refs fails with `WEB_PROVIDER_CREDENTIAL_MISSING` instead. On a
+ * profile-config reload the row is re-applied with a fresh config object and
+ * the seam auto-disposes the old provider, so new endpoint/keys take effect
+ * without manual unregistration (no duplicate-id failures).
  */
 export function apply(ctx, config = {}) {
   const provider = new YandexSearchProvider(
@@ -110,24 +113,5 @@ export function apply(ctx, config = {}) {
     () => resolveCredentials(ctx, config),
   )
   ctx.web.registerSearchProvider(provider)
-  // Heads-up only when there is no credential source at all: no literal
-  // config value and no harness credentials service. A present service can
-  // still resolve a ref at search time, but the most common cause of an empty
-  // search is a missing credential, so surface the fix early.
-  const options = resolveOptions(config)
-  const credentials = typeof ctx?.get === 'function' ? ctx.get('credentials') : undefined
-  const hasSeam = credentials !== undefined && typeof credentials.resolve === 'function'
-  const missingKey = !nonEmpty(options.yandexApiKey) && !hasSeam
-  const missingFolderId = !nonEmpty(options.yandexFolderId) && !hasSeam
-  if (missingKey || missingFolderId) {
-    const missing = []
-    if (missingKey) missing.push(`"${options.yandexApiKeyRef}"`)
-    if (missingFolderId) missing.push(`"${options.yandexFolderIdRef}"`)
-    console.warn(
-      'dsh-web-search-yandex: provider registered but no credential source is available — '
-      + `the harness has no credentials service and no literal apiKey/folderId is set; `
-      + `store ${missing.join(' and ')} via the web Models credentials page `
-      + 'or set literal apiKey/folderId in the web-search-yandex config',
-    )
-  }
+  ctx.logger?.debug?.('dsh-web-search-yandex: provider registered; secrets resolve at search time via the credentials seam')
 }
