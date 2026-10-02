@@ -9,5 +9,5 @@
       name: dsh-web-search-yandex
       inject: [web]
       config:
-        apiKeyEnv: YANDEX_API_KEY
-        folderIdEnv: YANDEX_FOLDER_ID
+        apiKeyRef: YANDEX_API_KEY
+        folderIdRef: YANDEX_FOLDER_ID
