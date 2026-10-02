@@ -77,9 +77,11 @@ web_search (модельный тул)
 | `apiKey` / `apiKeyEnv` | `YANDEX_API_KEY` | Ключ поиска (`AQVN...`) | — |
 | `folderId` / `folderIdEnv` | `YANDEX_FOLDER_ID` | Каталог Yandex Cloud | — |
 | `baseURL` | `YANDEX_SEARCH_API_URL` | Endpoint API | `https://searchapi.api.cloud.yandex.net/v2/web/search` |
-| `searchType` | `YANDEX_SEARCH_TYPE` | Сегмент выдачи | `SEARCH_TYPE_RU` |
-| `l10n` | `YANDEX_L10N` | Локализация | `LOCALIZATION_RU` |
+| `searchType` | `YANDEX_SEARCH_TYPE` | Сегмент выдачи | `SEARCH_TYPE_COM` |
+| `l10n` | `YANDEX_L10N` | Локализация | `LOCALIZATION_COM` |
 | `maxResults` | `YANDEX_MAX_RESULTS` | Верхняя граница источников | `10` (тул-слой режет до 8) |
+
+Сегмент по умолчанию — международный (`SEARCH_TYPE_COM`), он лучше подходит для свежего глобального контента (в т.ч. AI-новостей). Для выдачи по Рунету/русскоязычной повестке задай `SEARCH_TYPE_RU` + `LOCALIZATION_RU`.
 
 При неработающих кредах плагин пишет в лог понятное предупреждение (`set config apiKey/folderId or export YANDEX_API_KEY / YANDEX_FOLDER_ID`).
 

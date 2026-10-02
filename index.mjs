@@ -25,14 +25,14 @@ export { YANDEX_PROVIDER_ID } from './provider.mjs'
  *   apiKey / apiKeyEnv      — literal key or env var name (default YANDEX_API_KEY)
  *   folderId / folderIdEnv  — literal folder id or env var (default YANDEX_FOLDER_ID)
  *   baseURL                 — search API URL (default the public Yandex Cloud endpoint)
- *   searchType              — SERP segment (default SEARCH_TYPE_RU)
- *   l10n                    — localization (default LOCALIZATION_RU)
+ *   searchType              — SERP segment (default SEARCH_TYPE_COM)
+ *   l10n                    — localization (default LOCALIZATION_COM)
  *   maxResults              — upper bound on sources (default 10)
  */
 
 const DEFAULT_SEARCH_API_URL = 'https://searchapi.api.cloud.yandex.net/v2/web/search'
-const DEFAULT_SEARCH_TYPE = 'SEARCH_TYPE_RU'
-const DEFAULT_L10N = 'LOCALIZATION_RU'
+const DEFAULT_SEARCH_TYPE = 'SEARCH_TYPE_COM'
+const DEFAULT_L10N = 'LOCALIZATION_COM'
 const DEFAULT_MAX_RESULTS = 10
 
 function nonEmpty(value) {
