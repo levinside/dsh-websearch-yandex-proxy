@@ -1,5 +1,5 @@
 /**
- * Cordis plugin entry for the native Yandex search provider (Variant B).
+ * Cordis plugin entry for the native Yandex search provider (no HTTP proxy hop).
  *
  * Registers a `YandexSearchProvider` into `ctx.web` so the model-facing
  * `web_search` tool (owned by `tool-web`, unchanged) searches the Yandex Cloud
@@ -63,5 +63,17 @@ export function resolveOptions(config = {}) {
  * without manual unregistration (no duplicate-id failures).
  */
 export function apply(ctx, config = {}) {
-  ctx.web.registerSearchProvider(new YandexSearchProvider(() => resolveOptions(config)))
+  const provider = new YandexSearchProvider(() => resolveOptions(config))
+  ctx.web.registerSearchProvider(provider)
+  // A missing key/folder id makes the provider silently unavailable: emit one
+  // actionable line at apply time so a typo in an env var name or a missing
+  // credential does not end up as a puzzling "no usable web provider" later.
+  if (!provider.available()) {
+    const apiKeyEnv = nonEmpty(config.apiKeyEnv) ? config.apiKeyEnv : 'YANDEX_API_KEY'
+    const folderIdEnv = nonEmpty(config.folderIdEnv) ? config.folderIdEnv : 'YANDEX_FOLDER_ID'
+    console.warn(
+      'dsh-web-search-yandex: provider registered but unavailable — '
+      + `set config apiKey/folderId or export ${apiKeyEnv} / ${folderIdEnv}`,
+    )
+  }
 }

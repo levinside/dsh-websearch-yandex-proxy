@@ -2,11 +2,10 @@
  * A native `WebSearchProvider` for the DeepSeek Harness `ctx.web` seam, backed
  * by the official Yandex Cloud Search API.
  *
- * This is Variant B (no HTTP loop): the harness process calls Yandex directly
- * through `./lib/yandex-api.mjs` — the same canonical client the standalone
- * Variant A server uses — and returns normalized `WebSearchSource[]`, the same
- * shape the model-facing `web_search` tool already renders, so the client part
- * stays byte-identical.
+ * The harness process calls Yandex directly through `./lib/yandex-api.mjs` —
+ * the same canonical client the standalone `server.mjs` proxy uses — and
+ * returns normalized `WebSearchSource[]`, the same shape the model-facing
+ * `web_search` tool already renders, so the client part stays byte-identical.
  *
  * The provider is deliberately dependency-free (no `@deepseek-ai/*` imports):
  * profile-installed plugins in this setup resolve only their own module tree,

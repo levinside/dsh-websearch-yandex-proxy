@@ -3,7 +3,7 @@
 # of existing entries (and are skipped with "entry not found" when absent), so
 # a new plugin must use the `- insert:` form, like the base bundle and
 # dshmarket do. Profile wiring then OVERRIDES this row's config (searchProvider
-# selection + literal credentials) — see the main README, "Вариант B".
+# selection + literal credentials) — see the main README, "Установка".
 - insert:
     - id: web-search-yandex
       name: dsh-web-search-yandex
