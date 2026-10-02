@@ -47,7 +47,7 @@ test('resolveOptions falls back to defaults with no config', () => {
   const options = resolveOptions({})
   assert.equal(options.yandexApiKey, '')
   assert.equal(options.yandexFolderId, '')
-  assert.equal(options.yandexSearchApiUrl, 'https://searchapi.api.cloud.yandex.net/v2/web/search')
+  assert.equal(options.yandexSearchApiUrl, 'https://searchapi.api.cloud.yandex.net/v2/web/searchAsync')
   assert.equal(options.yandexSearchType, 'SEARCH_TYPE_COM')
   assert.equal(options.yandexL10n, 'LOCALIZATION_COM')
   assert.equal(options.maxResults, 10)
