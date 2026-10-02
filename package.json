@@ -21,7 +21,7 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "test": "node --test provider.test.mjs"
+    "test": "node --test provider.test.mjs lib/yandex-api.test.mjs"
   },
   "dsh": {
     "bundle": {
