@@ -5,7 +5,8 @@
 
 - **Вариант A — Messages-прокси** (этот сервер, `server.mjs`): подменяется только
   endpoint, на который ходит штатный провайдер `web-search-deepseek`.
-- **Вариант B — нативный Cordis-плагин** (`plugin/`): провайдер `yandex` живёт в
+- **Вариант B — нативный Cordis-плагин**: корень репозитория — npm-пакет
+  `dsh-web-search-yandex` с `dsh.bundle`, провайдер `yandex` живёт в
   процессе харнеса и ходит в Yandex Cloud Search API напрямую, без HTTP-прыжка.
   **Рекомендуется для штатного использования** (так развёрнут текущий профиль).
 
@@ -105,32 +106,41 @@ curl -s -X POST http://127.0.0.1:8787/anthropic/v1/messages \
 
 ## Вариант B — нативный плагин-провайдер (без локального HTTP-прыжка)
 
-Вместо отдельного процесса прокси можно поставить **Cordis-плагин** (`plugin/`),
-который регистрирует свой `WebSearchProvider` в шов `ctx.web`: запросы `web_search`
-ходят из процесса харнеса напрямую в Yandex Cloud Search API. Клиентский тул
-`web_search` не меняется; отдельный сервер и порт 8787 больше не нужны.
+Вместо отдельного процесса прокси можно поставить **Cordis-плагин**: корень
+репозитория и есть npm-пакет `dsh-web-search-yandex` с `dsh.bundle`, так что он
+ставится **одной командой**. Провайдер регистрируется в шов `ctx.web`, запросы
+`web_search` ходят из процесса харнеса напрямую в Yandex Cloud Search API.
+Клиентский тул `web_search` не меняется; отдельный сервер и порт 8787 не нужны.
 
-Файлы плагина:
+Файлы плагина (корень репозитория):
 
 | Файл | Что делает |
 |---|---|
-| `plugin/package.json` | npm-пакет `dsh-web-search-yandex` (+ `dsh.bundle.patch`) |
-| `plugin/provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` via вендоренного клиента |
-| `plugin/index.mjs` | Cordis-запись: `name`/`inject`/`apply`, резолв опций из конфига + env |
-| `plugin/lib/` | Вендоренная копия клиента Yandex (`yandex-api.mjs` + `xml.mjs`) — пакет самодостаточен при установке |
-| `plugin/cordis.patch.yml` | bundle-патч, который **вставляет** строку плагина через `- insert:` (новые плагины обязаны вставляться, а не объявляться top-level-строкой — иначе «entry not found») |
+| `package.json` | npm-пакет `dsh-web-search-yandex` (+ `dsh.bundle.patch`, `files`-whitelist) |
+| `provider.mjs` | `WebSearchProvider` (id `yandex`): `available()`/`search()` |
+| `index.mjs` | Cordis-запись: `name`/`inject`/`apply`, резолв опций из конфига + env |
+| `lib/yandex-api.mjs`, `lib/xml.mjs` | Yandex-клиент — **каноничная копия**, общая с Вариантом A (`server.mjs`) |
+| `cordis.patch.yml` | bundle-патч, который **вставляет** строку плагина через `- insert:` (новые плагины обязаны вставляться, а не объявляться top-level-строкой — иначе «entry not found») |
+
+> В установленный пакет попадает только `files`-whitelist: `index.mjs`,
+> `provider.mjs`, `cordis.patch.yml`, `lib/yandex-api.mjs`, `lib/xml.mjs`.
+> Сервер Варианта A, его модули и тесты в инсталляцию не входят.
 
 ### Установка в профиль
 
 1. Поставить пакет в профиль (пример для профиля `web`):
 
    ```bash
-   cd ~/.dsh/profiles/web && pnpm add file:/путь/к/yandex-search-proxy/plugin
+   # репозиторий опубликован на GitHub — одна команда:
+   dsh plugin --profile web add github:<owner>/<repo>
+
+   # или из локальной копии:
+   cd ~/.dsh/profiles/web && pnpm add file:/путь/к/репозиторию
    ```
 
-   > pnpm ставит `file:`-пакет **копией** (по списку `files` в package.json), а не
-   > симлинком. Поэтому после изменения кода плагина его надо переустановить:
-   > `pnpm remove dsh-web-search-yandex && pnpm add file:…/plugin`.
+   > `file:`-установка — это копия по `files`-whitelist, а не симлинк. После
+   > изменения кода плагина переустанови: `pnpm remove dsh-web-search-yandex &&
+   > pnpm add file:…` (при установке из GitHub — заново `dsh plugin add …`).
 
 2. Добавить пакет в список бандлов профиля (`package.json` → `dsh.profile.bundles`),
    иначе загрузчик не узнает модуль как entry (ровно так устроены `dshmarket`
@@ -178,8 +188,8 @@ dsh --profile web --dump-config   # в дереве должны быть id: we
 резолвится из своего собственного дерева модулей в профиле (как уже установленные
 там `dshmarket`/`dsh-sound-cue`). По той же причине он не зависит от Cordis-типов
 и Schemastery — конфиг читается как обычный объект строки патча. Yandex-клиент
-вендорится в `plugin/lib/`; тест-стражник следит, чтобы `plugin/lib/*` не
-расходились с `lib/*`.
+лежит в `lib/` и является **единственной** копией, общей с Вариантом A — никакого
+дублирования и стражника синхронизации больше не нужно.
 
 > **Важно про перезапуск.** Правки значений существующих строк применяются на лету
 > (`patchReload: "live"`), но **новая строка-плагин, изменение списка `bundles` и
@@ -241,7 +251,7 @@ YANDEX_API_KEY=AQVN... YANDEX_FOLDER_ID=b1g... node server.mjs
 ## Тесты
 
 ```bash
-npm test                     # то же: node --test test.mjs plugin/provider.test.mjs
+npm test                     # то же: node --test test.mjs provider.test.mjs
 ```
 
 Два файла:
@@ -250,9 +260,9 @@ npm test                     # то же: node --test test.mjs plugin/provider.t
   `web_search_tool_result` + `text.citations`), парсинг base64-XML официального API,
   парсинг HTML-выдачи для scrape, детект капчи, E2E по HTTP (все три пути Messages,
   healthz, ошибки, таймаут→504, переполнение тела→400).
-- `plugin/provider.test.mjs` — Вариант B: резолв опций, `available()`, нормализация
+- `provider.test.mjs` — Вариант B: резолв опций, `available()`, нормализация
   результатов, применение `maxResults`, маппинг ошибок (`WEB_PROVIDER_ERROR`/`WEB_ABORTED`),
-  регистрация через `apply()` и тест-стражник синхронности `plugin/lib/*` с `lib/*`.
+  регистрация через `apply()`.
 
 ## Ограничения и честные оговорки
 
