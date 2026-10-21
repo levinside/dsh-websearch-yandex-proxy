@@ -80,6 +80,10 @@ test('resolveOptions falls back to defaults with no config', () => {
   assert.equal(options.yandexSearchType, 'SEARCH_TYPE_COM')
   assert.equal(options.yandexL10n, 'LOCALIZATION_EN')
   assert.equal(options.maxResults, 10)
+  // No override: undefined, so lib/yandex-api.mjs defaults (300/500/120000ms) apply.
+  assert.equal(options.pollTimeoutMs, undefined)
+  assert.equal(options.pollIntervalMs, undefined)
+  assert.equal(options.pollFirstDelayMs, undefined)
 })
 
 test('resolveOptions carries literals and ref names, not secret values', () => {
@@ -111,6 +115,28 @@ test('resolveOptions normalizes invalid maxResults to the default', () => {
   assert.equal(resolveOptions(providerConfig({ maxResults: 0 })).maxResults, 10)
   assert.equal(resolveOptions(providerConfig({ maxResults: 3 })).maxResults, 3)
   assert.equal(resolveOptions(providerConfig({ maxResults: '7' })).maxResults, 10)
+})
+
+test('resolveOptions passes deferred-poll timing overrides through', () => {
+  const options = resolveOptions(providerConfig({
+    pollTimeoutMs: 150000,
+    pollIntervalMs: 750,
+    pollFirstDelayMs: 100,
+  }))
+  assert.equal(options.pollTimeoutMs, 150000)
+  assert.equal(options.pollIntervalMs, 750)
+  assert.equal(options.pollFirstDelayMs, 100)
+})
+
+test('resolveOptions drops invalid poll timing values so lib defaults apply', () => {
+  const options = resolveOptions(providerConfig({
+    pollTimeoutMs: 0,
+    pollIntervalMs: -5,
+    pollFirstDelayMs: '800',
+  }))
+  assert.equal(options.pollTimeoutMs, undefined)
+  assert.equal(options.pollIntervalMs, undefined)
+  assert.equal(options.pollFirstDelayMs, undefined)
 })
 
 // ── credential resolution ────────────────────────────────────────────────────
@@ -197,6 +223,18 @@ test('search() falls back to the options maxResults when the request has none', 
   })
   const provider = new YandexSearchProvider(providerOptions(providerConfig({ maxResults: 10 })), backend.runSearch, testCredentials)
   await provider.search({ query: 'q' })
+})
+
+test('search() forwards the deferred-poll timing options to the backend', async () => {
+  const backend = fakeBackend(() => [])
+  const provider = new YandexSearchProvider(
+    providerOptions(providerConfig({ pollTimeoutMs: 150000, pollIntervalMs: 750 })),
+    backend.runSearch,
+    testCredentials,
+  )
+  await provider.search({ query: 'q' })
+  assert.equal(backend.calls[0].config.pollTimeoutMs, 150000)
+  assert.equal(backend.calls[0].config.pollIntervalMs, 750)
 })
 
 test('search() yields empty sources without error when the backend has none', async () => {

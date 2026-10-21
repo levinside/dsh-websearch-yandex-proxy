@@ -34,6 +34,14 @@ export { YANDEX_PROVIDER_ID } from './provider.mjs'
  *   searchType              — SERP segment (default SEARCH_TYPE_COM)
  *   l10n                    — localization (default LOCALIZATION_EN)
  *   maxResults              — upper bound on sources (default 10)
+ *   pollTimeoutMs           — deferred-operation poll budget, ms (default 120000)
+ *   pollIntervalMs          — delay between operation polls, ms (default 500)
+ *   pollFirstDelayMs        — delay before the first operation poll, ms (default 300)
+ *
+ * `pollTimeoutMs` must stay at or above the harness `web_search` tool budget
+ * (`tool-web.config.searchTimeoutMs`, 60000 in the shipped base bundle): the
+ * tool's AbortSignal should end an interactive call, not this timer, otherwise
+ * the model gets a provider error for a search Yandex finishes seconds later.
  *
  * Credential precedence: literal config value wins; otherwise the ref is
  * resolved through the harness `ctx.credentials` seam (Models page /
@@ -49,6 +57,11 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.length > 0
 }
 
+/** Positive finite number, or undefined so the lib default applies. */
+function positiveNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 /** Resolve one fully-defaulted non-secret options snapshot from config. */
 export function resolveOptions(config = {}) {
   return {
@@ -62,6 +75,9 @@ export function resolveOptions(config = {}) {
     maxResults: Number.isInteger(config.maxResults) && config.maxResults > 0
       ? config.maxResults
       : DEFAULT_MAX_RESULTS,
+    pollTimeoutMs: positiveNumber(config.pollTimeoutMs),
+    pollIntervalMs: positiveNumber(config.pollIntervalMs),
+    pollFirstDelayMs: positiveNumber(config.pollFirstDelayMs),
   }
 }
 

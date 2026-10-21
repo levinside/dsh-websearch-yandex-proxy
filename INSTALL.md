@@ -76,11 +76,21 @@ pnpm add file:/абсолютный/путь/к/<репозиторий>
   config:
     apiKey: AQVN...
     folderId: b1g...
+    pollTimeoutMs: 120000
 ```
 
 Пояснения: строка `web` выбирает провайдер `yandex`; deepseek отключается; строка
 `web-search-yandex` переопределяет конфиг строки, которую уже вставил bundle-патч
 самого плагина. Перед правкой сделай резервную копию файла.
+
+> **Если поиск обрывается таймаутом.** Отложенный режим Yandex под нагрузкой
+> отвечает 24–124 с (иногда дольше), а модельный тул `web_search` по умолчанию
+> ждёт 60 с. `pollTimeoutMs` плагина ставь **не меньше** бюджета тула; сам бюджет
+> в web-профиле задаётся не host-строкой `tool-web` (она отключена), а внутри
+> agent-preset — см. README, «Про бюджет `web_search`»: нужно переопределить
+> `preset-standard` с `config.plugins`, скопированным из
+> `@deepseek-ai/dsh-web-app/presets/standard.patch.yml`, и поднять у `tool-web`
+> `searchTimeoutMs` до 90000.
 
 ## Шаг 5. Перезапустить харнес и проверить
 
@@ -104,3 +114,9 @@ pnpm add file:/абсолютный/путь/к/<репозиторий>
   (шаг 3) или не переустановлен после правок (шаг 2, примечание).
 - `403 PermissionDenied` — креды: роль не на том каталоге или ключ не из карточки
   сервиса Search API (шаг 0).
+- `Yandex Search API operation … did not finish within …ms` — отложенная очередь
+  Яндекса медленнее бюджета: подними `pollTimeoutMs` плагина и `searchTimeoutMs`
+  тула (шаг 4, примечание), соблюдая `pollTimeoutMs ≥ searchTimeoutMs`.
+- `HTTP 429 … Too many pending requests, retry later` — слишком много
+  одновременных отложенных операций; плагин ретраит сам, но не гоняй несколько
+  `web_search` параллельно.
