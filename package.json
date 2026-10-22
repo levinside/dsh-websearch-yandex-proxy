@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-search-yandex",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Native Yandex-backed WebSearchProvider plugin for DeepSeek Harness: registers into the ctx.web seam so the model-facing web_search tool queries the Yandex Cloud Search API directly, with no local HTTP proxy hop. The repo root IS the plugin package (dsh.bundle), so it installs with a single `dsh plugin add github:owner/repo`.",
   "type": "module",

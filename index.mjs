@@ -37,6 +37,10 @@ export { YANDEX_PROVIDER_ID } from './provider.mjs'
  *   pollTimeoutMs           — deferred-operation poll budget, ms (default 120000)
  *   pollIntervalMs          — delay between operation polls, ms (default 500)
  *   pollFirstDelayMs        — delay before the first operation poll, ms (default 300)
+ *   maxConcurrentSearches   — How many Yandex searches may run at once (default 2).
+ *                             The tool fans one call out to up to four queries; capping
+ *                             them keeps Yandex from answering 429 "too many pending
+ *                             requests" and from queueing the whole batch deeper.
  *
  * `pollTimeoutMs` must stay at or above the harness `web_search` tool budget
  * (`tool-web.config.searchTimeoutMs`, 60000 in the shipped base bundle): the
@@ -62,6 +66,11 @@ function positiveNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+/** Positive integer, or undefined so the provider default applies. */
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : undefined
+}
+
 /** Resolve one fully-defaulted non-secret options snapshot from config. */
 export function resolveOptions(config = {}) {
   return {
@@ -78,6 +87,7 @@ export function resolveOptions(config = {}) {
     pollTimeoutMs: positiveNumber(config.pollTimeoutMs),
     pollIntervalMs: positiveNumber(config.pollIntervalMs),
     pollFirstDelayMs: positiveNumber(config.pollFirstDelayMs),
+    maxConcurrentSearches: positiveInteger(config.maxConcurrentSearches),
   }
 }
 

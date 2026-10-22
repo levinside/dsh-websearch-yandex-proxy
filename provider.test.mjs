@@ -68,6 +68,30 @@ function fakeBackend(impl) {
   return { runSearch, calls }
 }
 
+/** Let queued promise work (slot hand-offs) settle between assertions. */
+const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Backend that holds every search open until released, tracking live count. */
+function gatedBackend() {
+  const state = { active: 0, peak: 0, gates: [] }
+  const runSearch = async () => {
+    state.active += 1
+    state.peak = Math.max(state.peak, state.active)
+    await new Promise((resolve) => state.gates.push(resolve))
+    state.active -= 1
+    return []
+  }
+  return { state, runSearch }
+}
+
+/** Release gated searches wave by wave until `settled` flips. */
+async function drainGates(state, isSettled) {
+  for (let guard = 0; !isSettled() && guard < 200; guard += 1) {
+    while (state.gates.length > 0) state.gates.shift()()
+    await tick()
+  }
+}
+
 // ── options resolution ───────────────────────────────────────────────────────
 
 test('resolveOptions falls back to defaults with no config', () => {
@@ -84,6 +108,8 @@ test('resolveOptions falls back to defaults with no config', () => {
   assert.equal(options.pollTimeoutMs, undefined)
   assert.equal(options.pollIntervalMs, undefined)
   assert.equal(options.pollFirstDelayMs, undefined)
+  // No override: the provider falls back to its own default cap of two.
+  assert.equal(options.maxConcurrentSearches, undefined)
 })
 
 test('resolveOptions carries literals and ref names, not secret values', () => {
@@ -137,6 +163,13 @@ test('resolveOptions drops invalid poll timing values so lib defaults apply', ()
   assert.equal(options.pollTimeoutMs, undefined)
   assert.equal(options.pollIntervalMs, undefined)
   assert.equal(options.pollFirstDelayMs, undefined)
+})
+
+test('resolveOptions passes maxConcurrentSearches and drops invalid values', () => {
+  assert.equal(resolveOptions(providerConfig({ maxConcurrentSearches: 3 })).maxConcurrentSearches, 3)
+  assert.equal(resolveOptions(providerConfig({ maxConcurrentSearches: 0 })).maxConcurrentSearches, undefined)
+  assert.equal(resolveOptions(providerConfig({ maxConcurrentSearches: 1.5 })).maxConcurrentSearches, undefined)
+  assert.equal(resolveOptions(providerConfig({ maxConcurrentSearches: '2' })).maxConcurrentSearches, undefined)
 })
 
 // ── credential resolution ────────────────────────────────────────────────────
@@ -235,6 +268,78 @@ test('search() forwards the deferred-poll timing options to the backend', async 
   await provider.search({ query: 'q' })
   assert.equal(backend.calls[0].config.pollTimeoutMs, 150000)
   assert.equal(backend.calls[0].config.pollIntervalMs, 750)
+})
+
+// ── concurrency cap ──────────────────────────────────────────────────────────
+// One web_search call fans out to up to four queries; Yandex answers 429 once
+// several deferred operations are pending, so the provider queues them.
+
+test('search() caps concurrent Yandex searches at two by default', async () => {
+  const { state, runSearch } = gatedBackend()
+  const provider = new YandexSearchProvider(providerOptions(providerConfig()), runSearch, testCredentials)
+
+  let settled = false
+  const all = Promise.all(
+    [0, 1, 2, 3].map((index) => provider.search({ query: `q${index}` })),
+  ).then(() => { settled = true })
+
+  await tick()
+  assert.equal(state.active, 2, 'only two backends may run at once by default')
+
+  await drainGates(state, () => settled)
+  await all
+  assert.equal(state.peak, 2, 'the cap holds for the whole batch')
+})
+
+test('search() honors maxConcurrentSearches from the plugin row', async () => {
+  const { state, runSearch } = gatedBackend()
+  const provider = new YandexSearchProvider(
+    providerOptions(providerConfig({ maxConcurrentSearches: 1 })),
+    runSearch,
+    testCredentials,
+  )
+
+  let settled = false
+  const all = Promise.all(
+    [0, 1, 2].map((index) => provider.search({ query: `q${index}` })),
+  ).then(() => { settled = true })
+
+  await tick()
+  assert.equal(state.active, 1, 'a configured cap of one serializes searches')
+
+  await drainGates(state, () => settled)
+  await all
+  assert.equal(state.peak, 1)
+})
+
+test('search() rejects an aborted queued search without leaking its slot', async () => {
+  const { state, runSearch } = gatedBackend()
+  const provider = new YandexSearchProvider(
+    providerOptions(providerConfig({ maxConcurrentSearches: 1 })),
+    runSearch,
+    testCredentials,
+  )
+
+  const first = provider.search({ query: 'first' })
+  await tick()
+  assert.equal(state.active, 1)
+
+  const controller = new AbortController()
+  const queued = provider.search({ query: 'queued' }, controller.signal)
+  const third = provider.search({ query: 'third' })
+  await tick()
+  assert.equal(state.active, 1, 'queued searches must not reach the backend')
+
+  controller.abort()
+  await assert.rejects(queued, (error) => error.code === 'WEB_ABORTED')
+  assert.equal(state.active, 1, 'the aborted waiter must not start a search')
+
+  state.gates.shift()()
+  await tick()
+  assert.equal(state.active, 1, 'the freed slot goes to the next waiter')
+
+  state.gates.shift()()
+  await Promise.all([first, third])
 })
 
 test('search() yields empty sources without error when the backend has none', async () => {

@@ -24,6 +24,60 @@ export const WEB_PROVIDER_ERROR = 'WEB_PROVIDER_ERROR'
 export const WEB_PROVIDER_CREDENTIAL_MISSING = 'WEB_PROVIDER_CREDENTIAL_MISSING'
 
 /**
+ * Default cap on searches running at once through Yandex's deferred queue.
+ *
+ * The harness fans one `web_search` call out to up to four queries in parallel,
+ * each of which is a separate `searchAsync` submission. Yandex queues deferred
+ * operations and starts answering 429 "too many pending requests" once several
+ * are in flight, which both bills an extra retry and pushes the whole batch
+ * deeper into the slow queue. Two parallel searches keep that pressure bounded
+ * without turning a multi-query search into a strictly serial one.
+ */
+export const DEFAULT_MAX_CONCURRENT_SEARCHES = 2
+
+/** FIFO concurrency limiter; `acquire(signal)` resolves with its `release`. */
+function createLimiter(limit) {
+  let active = 0
+  const waiters = []
+  const release = () => {
+    const next = waiters.shift()
+    if (next === undefined) {
+      active -= 1
+      return
+    }
+    next.signal?.removeEventListener('abort', next.onAbort)
+    next.resolve(release)
+  }
+  return {
+    acquire(signal) {
+      if (signal?.aborted === true) return Promise.reject(abortError())
+      if (active < limit) {
+        active += 1
+        return Promise.resolve(release)
+      }
+      return new Promise((resolve, reject) => {
+        const waiter = {
+          resolve,
+          reject,
+          signal,
+          onAbort: () => {
+            const index = waiters.indexOf(waiter)
+            if (index !== -1) waiters.splice(index, 1)
+            reject(abortError())
+          },
+        }
+        signal?.addEventListener('abort', waiter.onAbort, { once: true })
+        waiters.push(waiter)
+      })
+    },
+  }
+}
+
+function abortError() {
+  return Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+}
+
+/**
  * @typedef {object} ProviderOptions
  * @property {string} yandexApiKey         — literal key from config (may be empty)
  * @property {string} yandexApiKeyRef      — credential ref name in the Models registry
@@ -60,6 +114,12 @@ export class YandexSearchProvider {
     this.resolveOptions = resolveOptions
     this.runSearch = runSearch
     this.resolveCredentials = resolveCredentials
+    // Snapshot the cap once: a profile-config reload re-applies the plugin row
+    // and builds a fresh provider, so the cap follows config without races.
+    const configured = this.resolveOptions().maxConcurrentSearches
+    this.limiter = createLimiter(
+      Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_MAX_CONCURRENT_SEARCHES,
+    )
   }
 
   id = YANDEX_PROVIDER_ID
@@ -103,7 +163,11 @@ export class YandexSearchProvider {
       request.maxResults ?? options.maxResults,
       options.maxResults,
     )
+    let release
     try {
+      // Queue behind other in-flight searches so Yandex never sees a burst of
+      // pending deferred operations (429) and each accepted submit is billed.
+      release = await this.limiter.acquire(signal)
       const sources = await this.runSearch({
         query: request.query,
         config: { ...options, yandexApiKey, yandexFolderId, maxResults },
@@ -115,6 +179,7 @@ export class YandexSearchProvider {
       // AbortError from fetch into a YandexApiError (with the original as
       // `cause`), so this check comes BEFORE the backend-error branch — the
       // same ordering the standalone server applies (504 vs provider 502).
+      // It also covers an abort that lands while the search waits for its slot.
       if (signal?.aborted === true) {
         const aborted = new Error('Yandex web search aborted')
         aborted.code = 'WEB_ABORTED'
@@ -126,6 +191,8 @@ export class YandexSearchProvider {
         throw wrapped
       }
       throw error
+    } finally {
+      release?.()
     }
   }
 }
